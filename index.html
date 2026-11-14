@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>Meran Bus Live – SASA Echtzeitkarte</title>
+<meta name="theme-color" content="#0f4c5c" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Meran Bus" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/png" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-512.png" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root{
+    --bg:#F7F6F2;
+    --surface:#FFFFFF;
+    --ink:#1F2A24;
+    --muted:#66716A;
+    --line:#DAD6CB;
+    --green:#146C43;
+    --green-dark:#0F5236;
+    --amber:#C97A1E;
+    --red:#B23A32;
+    --gray:#6B7570;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);
+    background:var(--bg);
+  }
+  #app{
+    position:relative;
+    height:100dvh;
+    height:100vh;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+
+  .brand{display:flex;align-items:center;gap:10px;min-width:0;}
+  .brand-icon{width:40px;height:40px;border-radius:10px;flex:none;}
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:calc(10px + env(safe-area-inset-top)) 16px 10px 16px;
+    background:var(--surface);
+    border-bottom:1px solid var(--line);
+    z-index:500;
+  }
+  header h1{
+    font-size:17px;
+    line-height:1.15;
+    margin:0;
+    font-weight:700;
+    letter-spacing:-0.01em;
+  }
+  header .subtitle{
+    display:block;
+    font-size:12px;
+    color:var(--muted);
+    font-weight:500;
+    margin-top:1px;
+  }
+  .status-block{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-shrink:0;
+  }
+  #busCount{
+    font-size:13px;
+    font-weight:600;
+    color:var(--green-dark);
+    font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+  }
+  #refreshBtn{
+    width:34px;
+    height:34px;
+    border-radius:10px;
+    border:1px solid var(--line);
+    background:var(--surface);
+    color:var(--ink);
+    font-size:17px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+  }
+  #refreshBtn:active{background:var(--bg);}
+  #refreshBtn.spinning{animation:spin .8s linear infinite;}
+  @keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+  @media (prefers-reduced-motion: reduce){
+    #refreshBtn.spinning{animation:none;}
+  }
+
+  #map{
+    flex:1 1 auto;
+    min-height:0;
+    background:#E8E6DD;
+  }
+
+  #toast{
+    position:absolute;
+    left:12px;
+    right:12px;
+    top:calc(64px + env(safe-area-inset-top));
+    z-index:600;
+    background:#3A2E2A;
+    color:#F7F6F2;
+    padding:10px 14px;
+    border-radius:10px;
+    font-size:13px;
+    line-height:1.35;
+    box-shadow:0 4px 14px rgba(0,0,0,.25);
+  }
+  #toast[hidden]{display:none;}
+
+  footer{
+    background:var(--surface);
+    border-top:1px solid var(--line);
+    padding:10px 16px calc(10px + env(safe-area-inset-bottom)) 16px;
+    z-index:500;
+  }
+  .legend{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px 14px;
+    font-size:12px;
+    color:var(--muted);
+    margin-bottom:6px;
+  }
+  .legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+  .dot{width:10px;height:10px;border-radius:3px;flex-shrink:0;}
+  .dot-green{background:var(--green);}
+  .dot-amber{background:var(--amber);}
+  .dot-red{background:var(--red);}
+  .dot-gray{background:var(--gray);}
+  #lastUpdate{font-size:11px;color:var(--muted);}
+  #calcHint{font-size:10px;color:var(--muted);margin-top:1px;}
+  #diagLine{font-size:10px;color:var(--muted);margin-top:3px;opacity:.8;}
+
+  /* bus markers */
+  .leaflet-div-icon{background:transparent;border:none;}
+  .bus-badge{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    min-width:34px;
+    padding:2px 5px;
+    border-radius:8px;
+    border:2px solid #fff;
+    color:#fff;
+    font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+    box-shadow:0 1px 4px rgba(0,0,0,.35);
+    line-height:1.05;
+  }
+  .bus-line{font-weight:700;font-size:11px;}
+  .bus-id{font-weight:500;font-size:8px;opacity:.85;}
+  .bus-delay{font-weight:700;font-size:8px;margin-top:1px;opacity:.95;}
+  .bus-green{background:var(--green);}
+  .bus-amber{background:var(--amber);}
+  .bus-red{background:var(--red);}
+  .bus-gray{background:var(--gray);}
+
+  .bus-wrap{display:flex;flex-direction:column;align-items:center;}
+  .bus-tail{
+    width:0;height:0;
+    border-left:5px solid transparent;
+    border-right:5px solid transparent;
+    border-top:7px solid;
+    margin-top:-1px;
+  }
+  .tail-green{border-top-color:var(--green);}
+  .tail-amber{border-top-color:var(--amber);}
+  .tail-red{border-top-color:var(--red);}
+  .tail-gray{border-top-color:var(--gray);}
+
+  .popup-line{font-size:15px;font-weight:700;margin:0 0 4px 0;}
+  .popup-row{font-size:13px;margin:2px 0;color:var(--ink);}
+  .popup-row b{font-variant-numeric:tabular-nums;}
+  .popup-muted{color:var(--muted);}
+
+  #viewToggle{
+    display:flex;
+    gap:6px;
+    padding:8px 16px;
+    background:var(--surface);
+    border-bottom:1px solid var(--line);
+  }
+  .tab-btn{
+    flex:1;
+    padding:7px 0;
+    border-radius:8px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--muted);
+    font-size:13px;
+    font-weight:600;
+  }
+  .tab-btn.active{
+    background:var(--green);
+    border-color:var(--green);
+    color:#fff;
+  }
+
+  #listView{
+    flex:1 1 auto;
+    min-height:0;
+    overflow-y:auto;
+    background:var(--bg);
+    padding:8px 12px calc(8px + env(safe-area-inset-bottom));
+  }
+  .line-group{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:10px;
+    margin-bottom:8px;
+    overflow:hidden;
+  }
+  .line-group-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:8px 12px;
+    background:#EFEDE4;
+    font-weight:700;
+    font-size:13px;
+  }
+  .line-group-header .count{font-weight:500;color:var(--muted);font-size:12px;}
+  .line-group-empty{
+    padding:8px 12px;
+    font-size:12px;
+    color:var(--muted);
+    font-style:italic;
+  }
+  .bus-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:7px 12px;
+    border-top:1px solid var(--line);
+    font-size:13px;
+  }
+  .bus-row-left{display:flex;flex-direction:column;}
+  .bus-row-id{font-weight:600;font-variant-numeric:tabular-nums;}
+  .bus-row-status{font-size:11px;color:var(--muted);}
+  .bus-row-delay{
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+    padding:2px 8px;
+    border-radius:6px;
+    color:#fff;
+    font-size:12px;
+    white-space:nowrap;
+  }
+  .delay-green{background:var(--green);}
+  .delay-amber{background:var(--amber);}
+  .delay-red{background:var(--red);}
+  .delay-gray{background:var(--gray);}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <img class="brand-icon" src="icon-192.png" alt="" width="40" height="40" />
+      <div>
+        <h1>Meran Bus Live</h1>
+        <span class="subtitle">SASA · Meran, Passeier- &amp; Ultental</span>
+      </div>
+    </div>
+    <div class="status-block">
+      <span id="busCount">– Busse</span>
+      <button id="refreshBtn" aria-label="Jetzt aktualisieren" title="Jetzt aktualisieren">⟳</button>
+    </div>
+  </header>
+
+  <div id="viewToggle">
+    <button id="tabMap" class="tab-btn active" type="button">Karte</button>
+    <button id="tabList" class="tab-btn" type="button">Liste</button>
+  </div>
+
+  <div id="map"></div>
+  <div id="listView" hidden></div>
+  <div id="toast" role="status" hidden></div>
+
+  <footer>
+    <div class="legend">
+      <span><span class="dot dot-green"></span>pünktlich</span>
+      <span><span class="dot dot-amber"></span>leicht verspätet</span>
+      <span><span class="dot dot-red"></span>stark verspätet</span>
+      <span><span class="dot dot-gray"></span>unbekannt</span>
+    </div>
+    <div id="lastUpdate">wird geladen …</div>
+    <div id="calcHint">Fahrplan-Daten werden geladen …</div>
+    <div id="diagLine"></div>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // Meran, Passeiertal, Ultental (Richtung Fondo/Gampenjoch), Tschögglberg (Falzeben/Vöran)
+  var BOUNDS = { south:46.40, west:10.85, north:46.87, east:11.32 };
+  var CENTER = [46.635, 11.085];
+
+  // Diese Stadtlinien-Nummern gibt es auch in Bozen - hier zusätzlich auf den
+  // engeren Meraner Stadtbereich einschränken, damit keine Bozner Busse reinrutschen.
+  var MERAN_CITY_LINES = new Set(["1","3","4","5","6","N13"]);
+  var MERAN_CITY_BOUNDS = { south:46.58, west:11.08, north:46.72, east:11.24 };
+
+  // Diese Überland-/Regionallinien-Nummern sind im STA-Netz eindeutig, keine Bozen-Kollision.
+  var EXTRA_LINES = new Set([
+    "210","211","212","213","214","215","216","217","218","219",
+    "221","222","223","224","225","227",
+    "231","232","233","234","235","236","237","239",
+    "240","241","242","243","244","245","246",
+    "251","261","317","201","202","204"
+  ]);
+
+  // Feste Anzeigereihenfolge für die Listenansicht (so wie vorgegeben).
+  var ALL_LINES_RAW = [
+    "1","3","4","5","6","N13",
+    "210","211","212","213","214","215","216","217","218","219",
+    "221","222","223","224","225","227",
+    "231","232","233","234","235","236","237","239",
+    "240","241","242","243","244","245","246",
+    "251","261","317","201","202","204"
+  ];
+  function lineSortKey(label){
+    var m = String(label).match(/\d+/);
+    return m ? parseInt(m[0], 10) : 0;
+  }
+  var ALL_LINES_ORDERED = ALL_LINES_RAW.slice().sort(function(a, b){
+    return lineSortKey(a) - lineSortKey(b) || String(a).localeCompare(String(b));
+  });
+
+  var VEHICLE_URL = "https://gtfs.api.opendatahub.com/v1/realtime/sta-time-tables/vehicle-positions?format=json";
+  var TRIPUPD_URL = "https://gtfs.api.opendatahub.com/v1/realtime/sta-time-tables/trip-updates?format=json";
+  var STOPS_ZIP_URL = "https://gtfs.api.opendatahub.com/v1/dataset/sta-time-tables/raw";
+  var REFRESH_MS = 15000;
+
+  // Haltestellennamen und Solltzeiten kommen nicht aus dem Echtzeit-Feed,
+  // sondern einmalig aus dem offiziellen Fahrplan-Datensatz (GTFS-Zip).
+  var stopNameById = new Map();
+  var stopCoordById = new Map(); // stop_id -> {lat, lon}
+  var stopTimeByTripStop = new Map(); // "tripId|stopId" -> [Soll-Sekunden, ...]
+  var tripStops = new Map(); // tripId -> [{stopId, sec}, ...] sortiert nach Soll-Zeit
+  var tripShapeId = new Map(); // tripId -> shapeId
+  var shapePoints = new Map(); // shapeId -> [{lat, lon, dist}] (dist = kumulierte Strecke ab Formstart)
+  var tripStopDistCache = new Map(); // tripId -> [{stopId, sec, dist, coord}] oder null (einmal pro Fahrt berechnet)
+  var staticDataReady = false;
+
+  function parseGtfsTimeToSeconds(t){
+    if (!t) return null;
+    var parts = t.split(":");
+    if (parts.length !== 3) return null;
+    var h = parseInt(parts[0], 10), m = parseInt(parts[1], 10), s = parseInt(parts[2], 10);
+    if (isNaN(h) || isNaN(m) || isNaN(s)) return null;
+    return h * 3600 + m * 60 + s;
+  }
+
+  // Fest einprogrammierte EU-Sommerzeit-Regel (MEZ/MESZ, gilt für Italien/
+  // Meran): Sommerzeit von letztem Sonntag im März 01:00 UTC bis letztem
+  // Sonntag im Oktober 01:00 UTC. Absichtlich UNABHÄNGIG von new Date().getHours()
+  // o.ä. berechnet, weil manche Geräte/WebViews nach einer Zeitumstellung noch
+  // veraltete Zeitzonen-Daten verwenden und dann alle Busse pauschal um die
+  // Stunde der Umstellung "verspätet" zeigen (genau das ist am 1.11. passiert,
+  // kurz nach dem Ende der Sommerzeit am 25.10.).
+  function europeRomeOffsetHours(utcMs){
+    var d = new Date(utcMs);
+    var year = d.getUTCFullYear();
+    function lastSundayUtc(y, monthIndex){ // monthIndex: 0=Jan ... 11=Dez
+      var last = new Date(Date.UTC(y, monthIndex + 1, 0, 1, 0, 0)); // letzter Tag des Monats, 01:00 UTC
+      last.setUTCDate(last.getUTCDate() - last.getUTCDay());
+      return last;
+    }
+    var dstStart = lastSundayUtc(year, 2);  // letzter Sonntag März
+    var dstEnd = lastSundayUtc(year, 9);    // letzter Sonntag Oktober
+    var inDst = d >= dstStart && d < dstEnd;
+    return inDst ? 2 : 1; // MESZ = UTC+2, MEZ = UTC+1
+  }
+
+  // Liefert "Sekunden seit lokaler Mitternacht (Europa/Rom)" für einen
+  // Unix-Zeitstempel - ohne Date.getHours()/toLocaleString() zu verwenden, die
+  // von der (potenziell veralteten) Zeitzonen-Datenbank des Geräts abhängen.
+  function localSecondsOfDay(unixSeconds){
+    var utcMs = unixSeconds * 1000;
+    var offsetMs = europeRomeOffsetHours(utcMs) * 3600 * 1000;
+    var local = new Date(utcMs + offsetMs);
+    return local.getUTCHours() * 3600 + local.getUTCMinutes() * 60 + local.getUTCSeconds();
+  }
+
+  function localTimeString(unixSeconds){
+    var utcMs = unixSeconds * 1000;
+    var offsetMs = europeRomeOffsetHours(utcMs) * 3600 * 1000;
+    var local = new Date(utcMs + offsetMs);
+    function pad(n){ return (n < 10 ? "0" : "") + n; }
+    return pad(local.getUTCHours()) + ":" + pad(local.getUTCMinutes()) + ":" + pad(local.getUTCSeconds());
+  }
+
+  function haversineMeters(lat1, lon1, lat2, lon2){
+    var R = 6371000;
+    var toRad = function(d){ return d * Math.PI / 180; };
+    var dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  // Einfache lokale Projektion (äquirechteckig) für Punkt-auf-Strecke-Berechnungen
+  // über kurze Distanzen - genau genug, um den nächstgelegenen Streckenabschnitt
+  // zu finden; die tatsächliche Kilometrierung kommt aus den vorab kumulierten
+  // Shape-Distanzen, nicht aus dieser Projektion.
+  function toLocalXY(lat, lon, refLat){
+    var R = 6371000;
+    var toRad = function(d){ return d * Math.PI / 180; };
+    return {
+      x: toRad(lon) * R * Math.cos(toRad(refLat)),
+      y: toRad(lat) * R
+    };
+  }
+
+  function projectPointToSegment(px, py, ax, ay, bx, by){
+    var abx = bx - ax, aby = by - ay;
+    var apx = px - ax, apy = py - ay;
+    var ab2 = abx * abx + aby * aby;
+    var t = ab2 > 0 ? (apx * abx + apy * aby) / ab2 : 0;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    var cx = ax + t * abx, cy = ay + t * aby;
+    var dx = px - cx, dy = py - cy;
+    return { t: t, distSq: dx * dx + dy * dy };
+  }
+
+  // Findet den nächstgelegenen Punkt auf einer Shape-Polylinie (echte Streckenform
+  // aus shapes.txt) zu einer gegebenen Position und gibt die kumulierte Strecke
+  // ab Formstart an dieser Stelle zurück (Projektion auf das jeweils nächste
+  // Liniensegment, nicht nur auf den nächsten Stützpunkt).
+  function nearestDistanceAlongShape(points, lat, lon){
+    if (!points || points.length < 2) return null;
+    var target = toLocalXY(lat, lon, lat);
+    var bestDistSq = Infinity, bestCum = null;
+    for (var i = 0; i < points.length - 1; i++){
+      var a = toLocalXY(points[i].lat, points[i].lon, lat);
+      var b = toLocalXY(points[i + 1].lat, points[i + 1].lon, lat);
+      var proj = projectPointToSegment(target.x, target.y, a.x, a.y, b.x, b.y);
+      if (proj.distSq < bestDistSq){
+        bestDistSq = proj.distSq;
+        var segLen = points[i + 1].dist - points[i].dist;
+        bestCum = points[i].dist + proj.t * segLen;
+      }
+    }
+    return bestCum;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fahrplan-Daten (GTFS-Zip) laden - schnell und nur EINMAL pro Tag:
+  //  1) Nur Fahrten der gewünschten Linien werden überhaupt eingelesen (alle
+  //     anderen Zeilen werden beim Lesen sofort übersprungen). Das Südtiroler
+  //     Gesamtnetz hat Millionen Haltezeiten, wir brauchen nur einen kleinen Teil.
+  //  2) Das Ergebnis wird im Browser (IndexedDB) zwischengespeichert. Beim
+  //     nächsten Öffnen der App stehen die Fahrplandaten sofort zur Verfügung.
+  //  3) Eigener, schneller Zeilen-Parser statt PapaParse mit Objekt pro Zeile.
+  // ---------------------------------------------------------------------------
+  var ALL_LINES_SET = new Set(ALL_LINES_RAW);
+  var CACHE_VERSION = 3;
+  var CACHE_MAX_AGE_MS = 12 * 3600 * 1000;       // so lange gilt der Zwischenspeicher als frisch
+  var CACHE_STALE_OK_MS = 7 * 24 * 3600 * 1000;  // notfalls (Download scheitert) auch älter
+  var IDB_NAME = "meran-bus-live", IDB_STORE = "static", IDB_KEY = "gtfs";
+
+  var staticLoadAttempt = 0;
+  var staticLoading = false;
+  var staticProgressText = "";
+  var staticFromCache = false;
+  var staticFiltered = false;
+  var healStage = 0;
+  var lastProgressPaint = 0;
+
+  function updateStaticStatus(state, err){
+    if (!calcHintEl) return;
+    // Versuchsnummer UND die tatsächliche Fehlermeldung anzeigen - der echte
+    // Fehler ging sonst nur an console.error(), die auf dem Handy niemand sieht.
+    if (state === "loading"){
+      calcHintEl.textContent = (staticDataReady ? "Fahrplan wird im Hintergrund aktualisiert … " : "Fahrplan-Daten werden geladen … ") +
+        staticProgressText + " (Versuch " + staticLoadAttempt + ")";
+    } else if (state === "error"){
+      var msg = (err && err.message) ? err.message : "unbekannter Fehler";
+      calcHintEl.textContent = "Fahrplan-Fehler (Versuch " + staticLoadAttempt + "): " + msg;
+    } else {
+      calcHintEl.textContent = "~ an Halt. berechnet · ≈ Schätzung unterwegs" + (staticFromCache ? " · Fahrplan aus Zwischenspeicher" : "");
+    }
+  }
+
+  function setStaticProgress(text){
+    staticProgressText = text;
+    var now = Date.now();
+    if (now - lastProgressPaint > 300){ lastProgressPaint = now; updateStaticStatus("loading"); }
+  }
+
+  // ---- IndexedDB (alles fehlertolerant: im privaten Modus o.ä. einfach ohne Cache) ----
+  function idbRequest(mode, fn){
+    return new Promise(function(resolve){
+      try{
+        if (typeof indexedDB === "undefined" || !indexedDB){ resolve(null); return; }
+        var open = indexedDB.open(IDB_NAME, 1);
+        open.onupgradeneeded = function(){ try{ open.result.createObjectStore(IDB_STORE); }catch(e){} };
+        open.onerror = function(){ resolve(null); };
+        open.onblocked = function(){ resolve(null); };
+        open.onsuccess = function(){
+          var db = open.result;
+          try{
+            var tx = db.transaction(IDB_STORE, mode);
+            var req = fn(tx.objectStore(IDB_STORE));
+            tx.oncomplete = function(){ var r = req ? req.result : null; try{ db.close(); }catch(e){} resolve(r === undefined ? null : r); };
+            tx.onerror = tx.onabort = function(){ try{ db.close(); }catch(e){} resolve(null); };
+          } catch(e){ try{ db.close(); }catch(e2){} resolve(null); }
+        };
+      } catch(e){ resolve(null); }
+    });
+  }
+  function idbGet(){ return idbRequest("readonly", function(st){ return st.get(IDB_KEY); }); }
+  function idbPut(val){ return idbRequest("readwrite", function(st){ return st.put(val, IDB_KEY); }); }
+  function idbDelete(){ return idbRequest("readwrite", function(st){ return st["delete"](IDB_KEY); }); }
+
+  // ---- Download mit Fortschrittsanzeige ----
+  function readResponseWithProgress(r){
+    var total = 0;
+    try{ total = parseInt(r.headers.get("content-length"), 10) || 0; }catch(e){}
+    if (!r.body || typeof r.body.getReader !== "function") return r.arrayBuffer();
+    var reader = r.body.getReader(), chunks = [], got = 0;
+    function pump(){
+      return reader.read().then(function(res){
+        if (res.done){
+          var out = new Uint8Array(got), off = 0;
+          for (var i = 0; i < chunks.length; i++){ out.set(chunks[i], off); off += chunks[i].length; }
+          return out.buffer;
+        }
+        chunks.push(res.value); got += res.value.length;
+        setStaticProgress("Download " + (total ? Math.round(got * 100 / total) + " %" : (got / 1048576).toFixed(0) + " MB"));
+        return pump();
+      });
+    }
+    return pump();
+  }
+
+  // Der /raw-Endpunkt ist laut API-Dokumentation ein "storage-less frontend"
+  // zu Dateien in einem S3-Bucket; die JSON-Endpunkte haben CORS-Header, dieser
+  // Datei-Download anscheinend nicht ("Failed to fetch" bei sonst
+  // funktionierendem Netz). Ohne eigenen Server hilft nur ein öffentlicher
+  // CORS-Proxy als automatischer Fallback.
+  var CORS_PROXY_URL = "https://corsproxy.io/?url=";
+
+  function fetchZipArrayBuffer(){
+    return fetch(STOPS_ZIP_URL)
+      .then(function(r){ if(!r.ok) throw new Error("gtfs zip " + r.status); return readResponseWithProgress(r); })
+      .catch(function(directErr){
+        console.error("Direkter GTFS-Zip-Download fehlgeschlagen, versuche CORS-Proxy …", directErr);
+        return fetch(CORS_PROXY_URL + encodeURIComponent(STOPS_ZIP_URL))
+          .then(function(r2){ if(!r2.ok) throw new Error("gtfs zip via Proxy " + r2.status); return readResponseWithProgress(r2); })
+          .catch(function(proxyErr){
+            throw new Error("direkt: " + directErr.message + " · über Proxy: " + proxyErr.message);
+          });
+      });
+  }
+
+  // ---- CSV ----
+  // Zerlegt eine CSV-Zeile in Felder; schneller Weg ohne Anführungszeichen.
+  function splitCsvLine(line){
+    if (line.indexOf('"') === -1) return line.split(",");
+    var out = [], i = 0, n = line.length;
+    while (i <= n){
+      if (line.charCodeAt(i) === 34){
+        var v = "", j = i + 1;
+        for (;;){
+          var q = line.indexOf('"', j);
+          if (q === -1){ v += line.substring(j); j = n; break; }
+          if (line.charCodeAt(q + 1) === 34){ v += line.substring(j, q + 1); j = q + 2; continue; }
+          v += line.substring(j, q); j = q + 1; break;
+        }
+        out.push(v);
+        var c1 = line.indexOf(",", j);
+        if (c1 === -1) break;
+        i = c1 + 1;
+        if (i === n){ out.push(""); break; }
+      } else {
+        var c = line.indexOf(",", i);
+        if (c === -1){ out.push(line.substring(i)); break; }
+        out.push(line.substring(i, c));
+        i = c + 1;
+        if (i === n){ out.push(""); break; }
+      }
+    }
+    return out;
+  }
+
+  // Liest eine CSV-Datei aus dem Zip GESTREAMT (nie als ein einziger riesiger
+  // String - das Gesamtnetz sprengt sonst das Stringlimit des Browsers:
+  // "RangeError: Invalid string length"). spec.keyCol + spec.keep erlauben, Zeilen
+  // schon anhand des ersten Feldes zu verwerfen, ohne sie zu zerlegen.
+  function streamCsvFile(zipFile, spec){
+    return new Promise(function(resolve, reject){
+      var decoder = new TextDecoder("utf-8");
+      var leftover = "", ix = null, keyIdx = -1, keyIsFirst = false;
+      var total = (zipFile._data && zipFile._data.uncompressedSize) || 0;
+      var seen = 0, failed = false;
+
+      function handleLine(line){
+        if (line.length === 0) return;
+        if (ix === null){
+          if (line.charCodeAt(0) === 0xFEFF) line = line.substring(1);
+          var hdr = splitCsvLine(line);
+          ix = {};
+          for (var k = 0; k < hdr.length; k++) ix[hdr[k].trim()] = k;
+          if (spec.keyCol && ix[spec.keyCol] !== undefined){ keyIdx = ix[spec.keyCol]; keyIsFirst = (keyIdx === 0); }
+          return;
+        }
+        if (spec.keep && keyIdx >= 0){
+          if (keyIsFirst && line.charCodeAt(0) !== 34){
+            var c = line.indexOf(",");
+            if (!spec.keep(c === -1 ? line : line.substring(0, c))) return;
+            spec.onRow(splitCsvLine(line), ix);
+          } else {
+            var fl = splitCsvLine(line);
+            if (!spec.keep(fl[keyIdx])) return;
+            spec.onRow(fl, ix);
+          }
+          return;
+        }
+        spec.onRow(splitCsvLine(line), ix);
+      }
+      function feed(text){
+        var s = leftover + text, start = 0, nl;
+        while ((nl = s.indexOf("\n", start)) !== -1){
+          var end = nl;
+          if (end > start && s.charCodeAt(end - 1) === 13) end--;
+          handleLine(s.substring(start, end));
+          start = nl + 1;
+        }
+        leftover = s.substring(start);
+      }
+      function onChunk(u8){
+        seen += u8.length;
+        feed(decoder.decode(u8, { stream: true }));
+        setStaticProgress((spec.label || "Daten") + " " + (total ? Math.min(100, Math.round(seen * 100 / total)) + " %" : (seen / 1048576).toFixed(0) + " MB"));
+      }
+      function onDone(){
+        if (failed) return;
+        try{
+          feed(decoder.decode());
+          if (leftover){ handleLine(leftover.charCodeAt(leftover.length - 1) === 13 ? leftover.substring(0, leftover.length - 1) : leftover); leftover = ""; }
+          resolve();
+        } catch(e){ reject(e); }
+      }
+      function fail(e){ if (!failed){ failed = true; reject(e); } }
+
+      if (typeof zipFile.internalStream === "function"){
+        var st = zipFile.internalStream("uint8array");
+        st.on("data", function(chunk){
+          if (failed) return;
+          try{ onChunk(chunk); } catch(e){ try{ st.pause(); }catch(e2){} fail(e); }
+        }).on("error", fail).on("end", onDone).resume();
+      } else {
+        zipFile.async("blob").then(function(blob){
+          var CH = 4 * 1024 * 1024, off = 0;
+          (function next(){
+            if (off >= blob.size){ onDone(); return; }
+            blob.slice(off, off + CH).arrayBuffer().then(function(ab){
+              try{ onChunk(new Uint8Array(ab)); } catch(e){ fail(e); return; }
+              off += CH; next();
+            }).catch(fail);
+          })();
+        }).catch(fail);
+      }
+    });
+  }
+
+  // Baut aus dem GTFS-Zip genau die Strukturen, die die Verspätungsberechnung braucht.
+  function buildStaticFromZip(zip, noFilter){
+    var S = { stopNameById: new Map(), stopCoordById: new Map(), stopTimeByTripStop: new Map(),
+              tripStops: new Map(), tripShapeId: new Map(), shapePoints: new Map(), filtered: false };
+    var stopsFile = zip.file("stops.txt"), stopTimesFile = zip.file("stop_times.txt");
+    var tripsFile = zip.file("trips.txt"), shapesFile = zip.file("shapes.txt"), routesFile = zip.file("routes.txt");
+    if (!stopsFile) throw new Error("stops.txt fehlt im GTFS-Zip");
+    if (!stopTimesFile) throw new Error("stop_times.txt fehlt im GTFS-Zip");
+    // trips.txt/shapes.txt/routes.txt sind für die Filterung/Streckenform da; fehlen sie,
+    // wird nicht gefiltert bzw. auf Luftlinie zurückgefallen.
+
+    var allowedRouteIds = null, relevantTrips = null, relevantShapes = null;
+    var rawByShape = new Map();
+
+    return streamCsvFile(stopsFile, { label: "Haltestellen", onRow: function(f, ix){
+      var id = f[ix.stop_id]; if (!id) return;
+      S.stopNameById.set(id, f[ix.stop_name] || id);
+      var lat = parseFloat(f[ix.stop_lat]), lon = parseFloat(f[ix.stop_lon]);
+      if (!isNaN(lat) && !isNaN(lon)) S.stopCoordById.set(id, { lat: lat, lon: lon });
+    }})
+    .then(function(){
+      if (noFilter || !routesFile || !tripsFile) return;
+      return streamCsvFile(routesFile, { label: "Linien", onRow: function(f, ix){
+        var sn = String(f[ix.route_short_name] || "").trim();
+        if (ALL_LINES_SET.has(sn)){
+          if (!allowedRouteIds) allowedRouteIds = new Set();
+          allowedRouteIds.add(f[ix.route_id]);
+        }
+      }});
+    })
+    .then(function(){
+      if (!tripsFile) return;
+      function readTrips(filter){
+        return streamCsvFile(tripsFile, { label: "Fahrten", onRow: function(f, ix){
+          var tid = f[ix.trip_id]; if (!tid) return;
+          if (filter && !allowedRouteIds.has(f[ix.route_id])) return;
+          var sid = ix.shape_id !== undefined ? f[ix.shape_id] : "";
+          if (sid) S.tripShapeId.set(tid, sid);
+          if (filter){ relevantTrips.add(tid); if (sid) relevantShapes.add(sid); }
+        }});
+      }
+      if (allowedRouteIds){
+        relevantTrips = new Set(); relevantShapes = new Set();
+        return readTrips(true).then(function(){
+          if (relevantTrips.size === 0){   // Linien-Zuordnung passt nicht -> lieber alles laden als nichts
+            relevantTrips = null; relevantShapes = null; S.tripShapeId.clear();
+            return readTrips(false);
+          }
+        });
+      }
+      return readTrips(false);
+    })
+    .then(function(){
+      S.filtered = !!relevantTrips;
+      return streamCsvFile(stopTimesFile, {
+        label: "Haltezeiten", keyCol: "trip_id",
+        keep: relevantTrips ? function(t){ return relevantTrips.has(t); } : null,
+        onRow: function(f, ix){
+          var tid = f[ix.trip_id], sid = f[ix.stop_id];
+          if (!tid || !sid) return;
+          var sec = parseGtfsTimeToSeconds(f[ix.arrival_time]);
+          if (sec === null) sec = parseGtfsTimeToSeconds(f[ix.departure_time]);
+          if (sec === null) return;
+          var key = tid + "|" + sid;
+          // Rundkurse können dieselbe Haltestelle mehrmals bedienen (Hin- und
+          // Rückfahrt) -> alle Sollzeiten sammeln, nicht nur die letzte.
+          var arr = S.stopTimeByTripStop.get(key);
+          if (!arr){ arr = []; S.stopTimeByTripStop.set(key, arr); }
+          arr.push(sec);
+          var ts = S.tripStops.get(tid);
+          if (!ts){ ts = []; S.tripStops.set(tid, ts); }
+          ts.push({ stopId: sid, sec: sec });
+        }
+      });
+    })
+    .then(function(){
+      if (!shapesFile || S.tripShapeId.size === 0) return;
+      return streamCsvFile(shapesFile, {
+        label: "Strecken", keyCol: "shape_id",
+        keep: relevantShapes ? function(s){ return relevantShapes.has(s); } : null,
+        onRow: function(f, ix){
+          var sid = f[ix.shape_id]; if (!sid) return;
+          var lat = parseFloat(f[ix.shape_pt_lat]), lon = parseFloat(f[ix.shape_pt_lon]);
+          var seq = parseInt(f[ix.shape_pt_sequence], 10);
+          if (isNaN(lat) || isNaN(lon) || isNaN(seq)) return;
+          var a = rawByShape.get(sid);
+          if (!a){ a = []; rawByShape.set(sid, a); }
+          a.push({ lat: lat, lon: lon, seq: seq });
+        }
+      });
+    })
+    .then(function(){
+      // Streckenform: nach Reihenfolge sortieren, kumulierte Meter ab Formstart berechnen
+      // (eigene Berechnung - unabhängig von der Einheit in shape_dist_traveled).
+      rawByShape.forEach(function(arr, sid){
+        arr.sort(function(a, b){ return a.seq - b.seq; });
+        var cum = 0, pts = [];
+        for (var i = 0; i < arr.length; i++){
+          if (i > 0) cum += haversineMeters(arr[i - 1].lat, arr[i - 1].lon, arr[i].lat, arr[i].lon);
+          pts.push({ lat: arr[i].lat, lon: arr[i].lon, dist: cum });
+        }
+        S.shapePoints.set(sid, pts);
+      });
+      // Pro Fahrt nach Soll-Zeit sortieren (Vorgänger-/Nachfolger-Haltestelle).
+      S.tripStops.forEach(function(list){ list.sort(function(a, b){ return a.sec - b.sec; }); });
+      return S;
+    });
+  }
+
+  function applyStatic(S){
+    stopNameById = S.stopNameById; stopCoordById = S.stopCoordById;
+    stopTimeByTripStop = S.stopTimeByTripStop; tripStops = S.tripStops;
+    tripShapeId = S.tripShapeId; shapePoints = S.shapePoints;
+    tripStopDistCache = new Map();
+    staticFiltered = !!S.filtered;
+    staticDataReady = true;
+  }
+
+  function onStaticReady(){
+    // Sofort neu zeichnen, damit berechnete Verspätungen nicht erst beim nächsten
+    // 15-Sekunden-Takt erscheinen.
+    setTimeout(function(){ if (typeof fetchData === "function") fetchData(); }, 0);
+  }
+
+  function loadStaticData(opts){
+    opts = opts || {};
+    staticLoadAttempt++;
+    staticLoading = true;
+    staticProgressText = "";
+    updateStaticStatus("loading");
+    var staleCache = null;
+    return (opts.forceFresh ? Promise.resolve(null) : idbGet())
+      .then(function(cached){
+        if (cached && cached.version === CACHE_VERSION && cached.data){
+          var age = Date.now() - cached.savedAt;
+          if (age < CACHE_MAX_AGE_MS && !opts.noFilter){
+            staticFromCache = true;
+            applyStatic(cached.data);
+            updateStaticStatus("ok");
+            staticLoading = false;
+            onStaticReady();
+            return;
+          }
+          if (age < CACHE_STALE_OK_MS) staleCache = cached;
+        }
+        return fetchZipArrayBuffer()
+          .then(function(buf){ setStaticProgress("entpacke …"); return JSZip.loadAsync(buf); })
+          .then(function(zip){ return buildStaticFromZip(zip, !!opts.noFilter); })
+          .then(function(S){
+            staticFromCache = false;
+            applyStatic(S);
+            updateStaticStatus("ok");
+            staticLoading = false;
+            // Nur die kleine, gefilterte Fassung wird gespeichert (der komplette Fahrplan wäre zu groß).
+            if (S.filtered) idbPut({ version: CACHE_VERSION, savedAt: Date.now(), data: S });
+            onStaticReady();
+          });
+      })
+      .catch(function(err){
+        console.error("Fahrplan-Daten konnten nicht geladen werden (Versuch " + staticLoadAttempt + ")", err);
+        staticLoading = false;
+        if (staleCache && !staticDataReady){
+          // Download gescheitert, aber ein älterer Zwischenspeicher ist besser als nichts.
+          staticFromCache = true;
+          applyStatic(staleCache.data);
+          updateStaticStatus("ok");
+          onStaticReady();
+        } else if (!staticDataReady){
+          updateStaticStatus("error", err);
+        }
+        var delay = Math.min(60000, 5000 * staticLoadAttempt);
+        setTimeout(function(){ loadStaticData({ forceFresh: true, noFilter: opts.noFilter }); }, delay);
+      });
+  }
+  loadStaticData();
+
+  // Wählt aus mehreren Sollzeiten (Rundkurs-Haltestelle) die zeitlich
+  // nächstliegende zu "now" aus, inkl. Mitternachts-Korrektur.
+  function nearestScheduledTime(candidates, now){
+    var best = null, bestAdjNow = now, bestDiff = Infinity;
+    candidates.forEach(function(sched){
+      var adjNow = (sched >= 86400 && now < 14400) ? now + 86400 : now;
+      var diff = Math.abs(adjNow - sched);
+      if (diff < bestDiff){ bestDiff = diff; best = sched; bestAdjNow = adjNow; }
+    });
+    return best === null ? null : { sched: best, now: bestAdjNow };
+  }
+
+  var MAX_PLAUSIBLE_DELAY_SEC = 90 * 60; // Sicherheitsgrenze gegen Fehlzuordnungen (gilt NACH der Zeitversatz-Korrektur)
+  var RAW_MAX_DELAY_SEC = 4 * 3600;      // Rohgrenze VOR der Korrektur (damit ein pauschaler Stundenversatz sichtbar bleibt)
+
+  // Alle drei Berechnungen nehmen den Zeitstempel der Positionsmeldung selbst
+  // ("obsSeconds") statt der aktuellen Uhrzeit - die Meldung kann durch die
+  // Datenquelle selbst schon 1-2 Minuten alt sein, bevor sie bei uns ankommt.
+
+  // Fällt zurück auf eine selbst berechnete Verspätung (Ist- vs. Soll-Zeit),
+  // wenn der Bus gerade an einer bekannten Haltestelle steht und keine
+  // offizielle Vorhersage aus dem Echtzeit-Feed vorliegt.
+  function computeStopDelay(status, tripId, stopId, obsSeconds){
+    if (status !== "STOPPED_AT" || !staticDataReady || !tripId || !stopId) return null;
+    var candidates = stopTimeByTripStop.get(tripId + "|" + stopId);
+    if (!candidates) return null;
+    var match = nearestScheduledTime(candidates, obsSeconds);
+    if (!match) return null;
+    var delay = match.now - match.sched;
+    return Math.abs(delay) <= RAW_MAX_DELAY_SEC ? delay : null;
+  }
+
+  // Baut einmal pro Fahrt (und cacht danach) die Liste aller Haltestellen
+  // dieser Fahrt in Fahrtreihenfolge, jeweils mit Soll-Zeit und - falls eine
+  // Streckenform vorliegt - der kumulierten Entfernung dieser Haltestelle ab
+  // Formstart. Das ist die Grundlage dafür, die Position eines Busses rein
+  // aus trip_id + GPS-Position zu verorten, OHNE von stop_id aus dem
+  // Echtzeit-Feed abhängig zu sein (siehe computeMovingDelay).
+  function tripStopDistances(tripId){
+    if (tripStopDistCache.has(tripId)) return tripStopDistCache.get(tripId);
+    var seq = tripStops.get(tripId);
+    var result = null;
+    if (seq && seq.length >= 2){
+      var shapeId = tripShapeId.get(tripId);
+      var points = shapeId ? shapePoints.get(shapeId) : null;
+      var havePoints = points && points.length >= 2;
+      result = seq.map(function(s){
+        var coord = stopCoordById.get(s.stopId);
+        var dist = (havePoints && coord) ? nearestDistanceAlongShape(points, coord.lat, coord.lon) : null;
+        return { stopId: s.stopId, sec: s.sec, dist: dist, coord: coord || null };
+      });
+    }
+    tripStopDistCache.set(tripId, result);
+    return result;
+  }
+
+  // Verortet einen Bus unterwegs (zwischen zwei Haltestellen) ausschließlich
+  // über trip_id + aktuelle GPS-Position + Beobachtungszeit - unabhängig davon,
+  // ob das Echtzeit-Feed für diesen Bus gerade stop_id/current_status mitliefert
+  // (viele GTFS-RT-Feeds, auch dieses, lassen beides weg, solange der Bus ganz
+  // normal zwischen zwei Haltestellen fährt - das war der Hauptgrund, warum
+  // bisher nur ein Bruchteil der Busse überhaupt eine Verspätung bekam).
+  // Bevorzugt die echte Streckenform (shapes.txt): Bus-Position und alle
+  // Haltestellen der Fahrt werden auf dieselbe Polylinie projiziert, dadurch
+  // lässt sich eindeutig (auch bei Rundkursen) bestimmen, zwischen welchen
+  // zwei Haltestellen der Bus gerade ist. Ohne Streckenform: Fallback auf die
+  // geometrisch nächstgelegene Haltestelle der Fahrt.
+  function computeMovingDelay(tripId, curLat, curLon, obsSeconds){
+    if (!staticDataReady || !tripId) return null;
+    if (typeof curLat !== "number" || typeof curLon !== "number") return null;
+    var arr = tripStopDistances(tripId);
+    if (!arr || arr.length < 2) return null;
+
+    var shapeId = tripShapeId.get(tripId);
+    var points = shapeId ? shapePoints.get(shapeId) : null;
+    var haveShapeDists = points && points.length >= 2 && arr.every(function(a){ return a.dist !== null; });
+
+    var i, prevA, nextA, fraction, precise;
+
+    if (haveShapeDists){
+      var curDist = nearestDistanceAlongShape(points, curLat, curLon);
+      i = -1;
+      for (var k = 0; k < arr.length - 1; k++){
+        if (curDist >= arr[k].dist && curDist <= arr[k + 1].dist){ i = k; break; }
+      }
+      if (i === -1) i = (curDist < arr[0].dist) ? 0 : arr.length - 2;
+      prevA = arr[i]; nextA = arr[i + 1];
+      var segLen = nextA.dist - prevA.dist;
+      fraction = segLen > 30 ? (curDist - prevA.dist) / segLen : (curDist >= nextA.dist ? 1 : 0);
+      precise = true;
+    } else {
+      // Kein Shape für diese Fahrt: nächstgelegene Haltestelle der Fahrt per
+      // Luftlinie suchen, Bus liegt dann im Segment davor.
+      var bestJ = -1, bestD = Infinity;
+      for (var j = 0; j < arr.length; j++){
+        if (!arr[j].coord) continue;
+        var d = haversineMeters(arr[j].coord.lat, arr[j].coord.lon, curLat, curLon);
+        if (d < bestD){ bestD = d; bestJ = j; }
+      }
+      if (bestJ === -1) return null;
+      i = bestJ > 0 ? bestJ - 1 : 0;
+      prevA = arr[i]; nextA = arr[i + 1];
+      if (!prevA.coord || !nextA.coord) return null;
+      var totalDist = haversineMeters(prevA.coord.lat, prevA.coord.lon, nextA.coord.lat, nextA.coord.lon);
+      if (totalDist < 30) return null;
+      var traveledDist = haversineMeters(prevA.coord.lat, prevA.coord.lon, curLat, curLon);
+      fraction = traveledDist / totalDist;
+      precise = false;
+    }
+
+    if (fraction < 0) fraction = 0;
+    if (fraction > 1) fraction = 1;
+
+    var now = obsSeconds;
+    var adjNow = (nextA.sec >= 86400 && now < 14400) ? now + 86400 : now;
+    var expected = prevA.sec + fraction * (nextA.sec - prevA.sec);
+    var delay = adjNow - expected;
+    if (Math.abs(delay) > RAW_MAX_DELAY_SEC) return null;
+    // (Die "zu unsicher bei kleinen Werten"-Regel für Schätzungen ohne
+    // Streckenform wird in fetchData NACH der Zeitversatz-Korrektur angewendet.)
+    return { sec: delay, precise: precise };
+  }
+
+  function stopLine(status, stopId){
+    var name = stopId ? (stopNameById.get(String(stopId)) || null) : null;
+    if (status === "STOPPED_AT") return name ? ("an: " + name) : "an Haltestelle";
+    if (status === "INCOMING_AT") return name ? ("nähert sich: " + name) : "nähert sich Haltestelle";
+    if (status === "IN_TRANSIT_TO") return name ? ("nächster Halt: " + name) : "unterwegs";
+    return name ? ("bei: " + name) : "unbekannt";
+  }
+
+  var map = L.map("map", { zoomControl:true }).setView(CENTER, 11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+
+
+  var markers = new Map(); // vehicleId -> L.marker
+  var lastSuccess = null;
+  var busCountEl = document.getElementById("busCount");
+  var lastUpdateEl = document.getElementById("lastUpdate");
+  var toastEl = document.getElementById("toast");
+  var refreshBtn = document.getElementById("refreshBtn");
+  var mapEl = document.getElementById("map");
+  var listViewEl = document.getElementById("listView");
+  var tabMapBtn = document.getElementById("tabMap");
+  var tabListBtn = document.getElementById("tabList");
+  var calcHintEl = document.getElementById("calcHint");
+  var diagLineEl = document.getElementById("diagLine");
+
+  function showMapView(){
+    mapEl.hidden = false;
+    listViewEl.hidden = true;
+    tabMapBtn.classList.add("active");
+    tabListBtn.classList.remove("active");
+    setTimeout(function(){ map.invalidateSize(); }, 0);
+  }
+  function showListView(){
+    mapEl.hidden = true;
+    listViewEl.hidden = false;
+    tabListBtn.classList.add("active");
+    tabMapBtn.classList.remove("active");
+  }
+  tabMapBtn.addEventListener("click", showMapView);
+  tabListBtn.addEventListener("click", showListView);
+
+  function showToast(msg){ toastEl.textContent = msg; toastEl.hidden = false; }
+  function hideToast(){ toastEl.hidden = true; }
+
+  function classifyDelay(sec, kind){
+    if (sec === null || sec === undefined) return { cls:"gray", text:"unbekannt", short:"–" };
+    var min = Math.round(sec / 60);
+
+    if (kind === "interp"){
+      // Shape-basierte Schätzung unterwegs - deckt jetzt den vollen Bereich ab
+      // (pünktlich/früher/verspätet), nicht nur deutliche Verspätungen.
+      if (sec <= 60 && sec >= -60){ return { cls:"green", text:"≈ pünktlich (Schätzung)", short:"≈±0" }; }
+      if (sec < -60){ return { cls:"green", text:"≈ " + Math.abs(min) + " Min früher (Schätzung)", short:"≈" + min }; }
+      var icls = sec <= 300 ? "amber" : "red";
+      return { cls:icls, text:"≈ +" + min + " Min (Schätzung)", short:"≈+" + min };
+    }
+
+    var cls, text, short;
+    if (sec <= 60 && sec >= -60){ cls = "green"; text = "pünktlich"; short = "±0"; }
+    else if (sec < -60){ cls = "green"; text = (Math.abs(min)) + " Min früher"; short = String(min); }
+    else if (sec <= 300){ cls = "amber"; text = "+" + min + " Min"; short = "+" + min; }
+    else { cls = "red"; text = "+" + min + " Min"; short = "+" + min; }
+    if (kind === "exact"){ text += " · berechnet"; short = "~" + short; }
+    return { cls:cls, text:text, short:short };
+  }
+
+  function fmtTime(unixSeconds){
+    // Nutzt die fest einprogrammierte EU-Sommerzeit-Regel statt
+    // toLocaleTimeString(), damit die Anzeige auch bei veralteten
+    // Zeitzonen-Daten des Geräts korrekt bleibt (siehe localTimeString).
+    return localTimeString(unixSeconds);
+  }
+
+  function fmtAge(unixSeconds){
+    var age = Math.max(0, Math.round(Date.now() / 1000 - unixSeconds));
+    if (age < 60) return age + " s";
+    var m = Math.floor(age / 60), s = age % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s + " Min";
+  }
+
+  function buildDelayIndex(tripUpdateJson){
+    var index = new Map();
+    var entities = (tripUpdateJson && tripUpdateJson.entity) || [];
+    for (var i = 0; i < entities.length; i++){
+      var tu = entities[i].trip_update;
+      if (!tu || !tu.trip || !tu.trip.trip_id) continue;
+      var stus = tu.stop_time_update || [];
+      var delay = null;
+      for (var j = 0; j < stus.length; j++){
+        var s = stus[j];
+        if (s.arrival && typeof s.arrival.delay === "number"){ delay = s.arrival.delay; break; }
+        if (s.departure && typeof s.departure.delay === "number"){ delay = s.departure.delay; break; }
+      }
+      index.set(tu.trip.trip_id, delay);
+    }
+    return index;
+  }
+
+  function withinBounds(lat, lon, b){
+    return lat >= b.south && lat <= b.north && lon >= b.west && lon <= b.east;
+  }
+
+  function lineAllowed(label, lat, lon){
+    if (MERAN_CITY_LINES.has(label)) return withinBounds(lat, lon, MERAN_CITY_BOUNDS);
+    if (EXTRA_LINES.has(label)) return withinBounds(lat, lon, BOUNDS);
+    return false;
+  }
+
+  function makeIcon(label, vehicleId, delayShort, cls){
+    return L.divIcon({
+      className:"",
+      html:
+        '<div class="bus-wrap">' +
+          '<div class="bus-badge bus-' + cls + '">' +
+            '<div class="bus-line">' + label + '</div>' +
+            '<div class="bus-id">' + vehicleId + '</div>' +
+            '<div class="bus-delay">' + delayShort + '</div>' +
+          '</div>' +
+          '<div class="bus-tail tail-' + cls + '"></div>' +
+        '</div>',
+      iconSize:null,
+      iconAnchor:[20, 43],
+      popupAnchor:[0, -43]
+    });
+  }
+
+  function popupHtml(v, delayInfo){
+    return (
+      '<div class="popup-line">Linie ' + v.label + "</div>" +
+      '<div class="popup-row">Fahrzeug-Nr. <b>' + v.vehicleId + "</b></div>" +
+      '<div class="popup-row">Verspätung: <b>' + delayInfo.text + "</b></div>" +
+      '<div class="popup-row popup-muted">' + stopLine(v.status, v.stopId) + "</div>" +
+      '<div class="popup-row popup-muted">Position vom: ' + fmtTime(v.timestamp) + " (vor " + fmtAge(v.timestamp) + ")</div>"
+    );
+  }
+
+  function render(vehicles){
+    var seen = new Set();
+
+    vehicles.forEach(function(v){
+      seen.add(v.markerId);
+      var d = classifyDelay(v.delaySec, v.delayKind);
+      var icon = makeIcon(v.label, v.vehicleId, d.short, d.cls);
+
+      if (markers.has(v.markerId)){
+        var m = markers.get(v.markerId);
+        m.setLatLng([v.lat, v.lon]);
+        m.setIcon(icon);
+        m.setPopupContent(popupHtml(v, d));
+      } else {
+        var marker = L.marker([v.lat, v.lon], { icon: icon }).addTo(map);
+        marker.bindPopup(popupHtml(v, d));
+        markers.set(v.markerId, marker);
+      }
+    });
+
+    // Busse entfernen, die nicht mehr im Feed / Gebiet sind
+    markers.forEach(function(marker, id){
+      if (!seen.has(id)){
+        map.removeLayer(marker);
+        markers.delete(id);
+      }
+    });
+
+    busCountEl.textContent = vehicles.length + (vehicles.length === 1 ? " Bus" : " Busse");
+  }
+
+  function renderList(vehicles){
+    var byLine = new Map();
+    vehicles.forEach(function(v){
+      if (!byLine.has(v.label)) byLine.set(v.label, []);
+      byLine.get(v.label).push(v);
+    });
+
+    var html = "";
+    ALL_LINES_ORDERED.forEach(function(line){
+      var buses = (byLine.get(line) || []).slice();
+      buses.sort(function(a, b){
+        return String(a.vehicleId).localeCompare(String(b.vehicleId), "de", { numeric:true });
+      });
+
+      html += '<div class="line-group">';
+      html += '<div class="line-group-header"><span>Linie ' + line + '</span><span class="count">' +
+               buses.length + (buses.length === 1 ? " Bus" : " Busse") + '</span></div>';
+
+      if (buses.length === 0){
+        html += '<div class="line-group-empty">Gerade kein Bus mit Live-Daten aktiv</div>';
+      } else {
+        buses.forEach(function(v){
+          var d = classifyDelay(v.delaySec, v.delayKind);
+          html += '<div class="bus-row">' +
+                    '<div class="bus-row-left">' +
+                      '<span class="bus-row-id">Fahrzeug ' + v.vehicleId + '</span>' +
+                      '<span class="bus-row-status">' + stopLine(v.status, v.stopId) + '</span>' +
+                    '</div>' +
+                    '<span class="bus-row-delay delay-' + d.cls + '">' + d.text + '</span>' +
+                  '</div>';
+        });
+      }
+      html += '</div>';
+    });
+
+    listViewEl.innerHTML = html;
+  }
+
+  function updateLastUpdateText(){
+    if (!lastSuccess){
+      lastUpdateEl.textContent = "wird geladen …";
+      return;
+    }
+    var secs = Math.round((Date.now() - lastSuccess) / 1000);
+    var when = secs < 5 ? "gerade eben" : "vor " + secs + " s";
+    lastUpdateEl.textContent = "Zuletzt aktualisiert: " + when;
+  }
+
+  // ---- Zeitversatz-Kalibrierung -------------------------------------------
+  // Die offiziellen Verspätungen aus dem Feed sind verlässlich. Wo für einen Bus
+  // sowohl ein offizieller Wert ALS AUCH meine eigene Berechnung (Ist- gegen
+  // Soll-Zeit) vorliegt, müssen beide nahezu gleich sein. Liegt die Differenz
+  // durchgehend bei ca. einer vollen Stunde, ist nicht der Bus "eine Stunde zu
+  // spät", sondern eine Uhrzeit-Referenz (Feed-Zeitstempel ODER Fahrplan-Zeiten)
+  // um eine Stunde verschoben - dann wird dieser Versatz herausgerechnet.
+  // Fehlen offizielle Vergleichswerte, gilt als Notlösung: eine komplette Flotte
+  // mit einem Median von ~+60 Min ist physikalisch unmöglich -> ebenfalls Versatz.
+  function medianOf(arr){
+    if (!arr.length) return null;
+    var a = arr.slice().sort(function(x, y){ return x - y; });
+    var n = a.length;
+    return n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2;
+  }
+  function wholeHoursNear(sec){
+    var k = Math.round(sec / 3600);
+    if (k === 0) return 0;
+    return Math.abs(sec - k * 3600) <= 15 * 60 ? k : 0;
+  }
+  function estimateHourOffset(selfValues, pairDiffs){
+    var res = { sec: 0, source: "keine", n: 0, median: null, confirmedZero: false };
+    var mp = medianOf(pairDiffs);
+    if (mp !== null){
+      var kp = wholeHoursNear(mp);
+      if (kp !== 0) return { sec: kp * 3600, source: "Vergleich mit " + pairDiffs.length + " offiziellen Werten", n: pairDiffs.length, median: mp, confirmedZero: false };
+      if (pairDiffs.length >= 3 && Math.abs(mp) < 30 * 60){
+        return { sec: 0, source: "offizielle Werte bestätigen Rechnung", n: pairDiffs.length, median: mp, confirmedZero: true };
+      }
+    }
+    var n = selfValues.length;
+    if (n >= 3){
+      var ms = medianOf(selfValues);
+      var ks = wholeHoursNear(ms);
+      if (ks !== 0){
+        // Ab 5 Bussen genügt der Median; bei 3-4 Bussen (z.B. nachts) müssen ALLE
+        // Werte nahe derselben vollen Stunde liegen.
+        var allNear = true;
+        for (var i = 0; i < n; i++){ if (Math.abs(selfValues[i] - ks * 3600) > 20 * 60){ allNear = false; break; } }
+        if (n >= 5 || allNear) return { sec: ks * 3600, source: "Median aller " + n + " Busse", n: n, median: ms, confirmedZero: false };
+      }
+      res.median = ms; res.n = n;
+      if (n >= 5 && ks === 0 && Math.abs(ms) < 30 * 60) res.confirmedZero = true;
+    }
+    return res;
+  }
+
+  // ---- Gemerkter Zeitversatz -------------------------------------------------
+  // Nachts fahren nur wenige Busse - dann reichen die Daten nicht, um den Versatz
+  // neu zu bestimmen. Deshalb wird ein einmal sicher erkannter Versatz gemerkt
+  // (auch über App-Neustarts, localStorage) und weiter angewendet, bis neue,
+  // ausreichende Daten ihn widerlegen ("Null bestätigt") oder er 3 Tage alt ist.
+  var OFFSET_KEY = "mbl-hour-offset-v1";
+  var OFFSET_MAX_AGE_MS = 3 * 24 * 3600 * 1000;
+  // Standardannahme, solange auf diesem Gerät noch nie ein Versatz bestimmt (oder
+  // bestätigt "es gibt keinen") wurde: seit der Zeitumstellung am 25.10. zeigten
+  // ALLE selbst berechneten Werte rund +60 Min. Sobald genug Busse fahren, wird das
+  // anhand der echten Daten bestätigt oder widerlegt (und dann gemerkt).
+  var storedOffset = { sec: 3600, ts: 0, source: "Standardannahme", isDefault: true };
+  (function loadStoredOffset(){
+    try{
+      var raw = localStorage.getItem(OFFSET_KEY);
+      if (!raw) return;
+      var o = JSON.parse(raw);
+      if (o && typeof o.sec === "number" && o.sec % 3600 === 0 && typeof o.ts === "number" &&
+          Date.now() - o.ts < OFFSET_MAX_AGE_MS){
+        storedOffset = { sec: o.sec, ts: o.ts, source: String(o.source || ""), isDefault: false };
+      }
+    } catch(e){}
+  })();
+  function rememberOffset(sec, source){
+    if (!storedOffset.isDefault && storedOffset.sec === sec && Date.now() - storedOffset.ts < 60000){ return; }
+    storedOffset = { sec: sec, ts: Date.now(), source: source, isDefault: false };
+    try{ localStorage.setItem(OFFSET_KEY, JSON.stringify(storedOffset)); }catch(e){}
+  }
+
+  function fetchData(){
+    refreshBtn.classList.add("spinning");
+    Promise.all([
+      fetch(VEHICLE_URL).then(function(r){ if(!r.ok) throw new Error("vehicle-positions " + r.status); return r.json(); }),
+      fetch(TRIPUPD_URL).then(function(r){ if(!r.ok) throw new Error("trip-updates " + r.status); return r.json(); })
+    ]).then(function(results){
+      var vehicleJson = results[0];
+      var delayIndex = buildDelayIndex(results[1]);
+      var entities = (vehicleJson && vehicleJson.entity) || [];
+
+      // Diagnose-Zähler: zeigt in der Fußzeile, an welcher Stelle der Kette
+      // (trip_id vorhanden? im Fahrplan gefunden? Halt/Fahrt berechnet?) die
+      // meisten Busse tatsächlich hängen bleiben - statt weiter zu raten.
+      var diag = { total:0, noTripId:0, tripNotInSchedule:0, stopped:0,
+                   official:0, exact:0, moving:0, unknown:0, badTimestamp:0 };
+      var skewSamples = [];   // Feed-Zeitstempel minus Gerätezeit (Sekunden), nur Diagnose
+      var rawSelf = [];       // alle selbst berechneten Rohverspätungen
+      var pairDiffs = [];     // eigene minus offizielle Verspätung, wo beides vorliegt
+
+      var vehicles = [];
+      for (var i = 0; i < entities.length; i++){
+        var ve = entities[i].vehicle;
+        if (!ve || !ve.position) continue;
+        var lat = ve.position.latitude, lon = ve.position.longitude;
+        if (typeof lat !== "number" || typeof lon !== "number") continue;
+        var label = (ve.vehicle && ve.vehicle.label) || "?";
+        if (!lineAllowed(label, lat, lon)) continue;
+
+        diag.total++;
+
+        var tripId = ve.trip && ve.trip.trip_id;
+        var stopId = ve.stop_id || null;
+        var obsUnix = ve.timestamp || vehicleJson.header.timestamp;
+
+        // Plausibilitäts-Check: der Zeitstempel einer Live-Position sollte immer
+        // nah an der aktuellen Gerätezeit liegen (ein paar Sekunden bis wenige
+        // Minuten alt). Weicht er stark ab - insbesondere um etwas nahe einer
+        // vollen Stunde, wie es nach einer Zeitumstellung passiert, wenn die
+        // Datenquelle selbst (nicht das Gerät) noch mit dem alten UTC-Versatz
+        // rechnet - ist der gelieferte Zeitstempel nicht vertrauenswürdig. Die
+        // vorherige Annahme war, dass nur das GERÄT eine veraltete Zeitzonen-
+        // Tabelle haben könnte; die MEZ/MESZ-Berechnung oben behebt das, kann
+        // aber einen Fehler IN DEN ROHDATEN selbst (serverseitig) nicht lösen.
+        // In diesem Fall lieber auf die zuverlässige Gerätezeit zurückfallen -
+        // etwas ungenauer (bis zu ~1-2 Min durch normale Positions-Latenz), aber
+        // nicht um eine ganze Stunde falsch.
+        var deviceNowUnix = Date.now() / 1000;
+        skewSamples.push(obsUnix - deviceNowUnix);
+        var tsPlausible = Math.abs(obsUnix - deviceNowUnix) <= 600; // 10 Minuten Toleranz
+        if (!tsPlausible){
+          diag.badTimestamp++;
+          obsUnix = deviceNowUnix;
+        }
+
+        // localSecondsOfDay() statt new Date(...).getHours() - unabhängig von
+        // der Zeitzonen-Datenbank des Geräts (siehe Kommentar dort). Das war die
+        // Ursache für die pauschale ~60-Minuten-Verspätung bei allen Bussen
+        // direkt nach dem Ende der Sommerzeit.
+        var obsSeconds = localSecondsOfDay(obsUnix);
+
+        // GTFS-Realtime definiert current_status mit Default-Wert IN_TRANSIT_TO
+        // (siehe gtfs-realtime.proto). Viele Feeds - auch dieses - senden das Feld
+        // deshalb nur, wenn der Bus STOPPED_AT/INCOMING_AT ist, und LASSEN ES WEG,
+        // wenn er ganz normal unterwegs ist (der häufigste Fall!). Ohne diesen
+        // Fallback wurde "status===undefined" von keiner der drei Berechnungen
+        // erkannt, wodurch fast alle fahrenden Busse immer "unbekannt" blieben.
+        var status = ve.current_status || "IN_TRANSIT_TO";
+        if (status === "STOPPED_AT") diag.stopped++;
+
+        if (!tripId) diag.noTripId++;
+        else if (staticDataReady && !tripStops.has(tripId)) diag.tripNotInSchedule++;
+
+        var officialDelay = tripId && delayIndex.has(tripId) ? delayIndex.get(tripId) : null;
+
+        // Eigene Berechnung läuft IMMER (auch wenn ein offizieller Wert da ist),
+        // damit beide Werte miteinander verglichen werden können (Kalibrierung).
+        var selfSec = null, selfKind = null, selfPrecise = true;
+        var exact = computeStopDelay(status, tripId, stopId, obsSeconds);
+        if (exact !== null){
+          selfSec = exact; selfKind = "exact";
+        } else if (status !== "STOPPED_AT"){
+          // Funktioniert allein aus trip_id + GPS-Position + Zeitstempel - braucht
+          // KEIN stop_id aus dem Echtzeit-Feed.
+          var moving = computeMovingDelay(tripId, lat, lon, obsSeconds);
+          if (moving !== null){ selfSec = moving.sec; selfKind = "interp"; selfPrecise = moving.precise; }
+        }
+        if (selfSec !== null) rawSelf.push(selfSec);
+        if (selfSec !== null && officialDelay !== null) pairDiffs.push(selfSec - officialDelay);
+
+        vehicles.push({
+          // entities[i].id is the GTFS-RT feed entity id: always present, always unique.
+          markerId: entities[i].id,
+          vehicleId: (ve.vehicle && ve.vehicle.id) || entities[i].id,
+          label: label,
+          lat: lat,
+          lon: lon,
+          status: status,
+          stopId: stopId,
+          timestamp: obsUnix,
+          delaySec: null,
+          delayKind: null,
+          _official: officialDelay,
+          _self: selfSec,
+          _selfKind: selfKind,
+          _selfPrecise: selfPrecise
+        });
+      }
+
+      // Pass 2: Zeitversatz bestimmen und anwenden, Ergebnis je Bus festlegen.
+      var cal = estimateHourOffset(rawSelf, pairDiffs);
+      if (cal.sec !== 0){
+        rememberOffset(cal.sec, cal.source);
+      } else if (cal.confirmedZero){
+        if (storedOffset.sec !== 0 || storedOffset.isDefault) rememberOffset(0, cal.source);
+      } else if (storedOffset.sec !== 0){
+        // Zu wenig Daten für eine neue Bestimmung -> zuletzt sicher erkannten Versatz (oder, wenn es
+        // noch keinen gibt, die Standardannahme) weiter anwenden.
+        cal = { sec: storedOffset.sec,
+                source: storedOffset.isDefault
+                  ? "Standardannahme, bis genug Busse fahren"
+                  : "gemerkt, zuletzt " + localTimeString(storedOffset.ts / 1000).slice(0, 5) + " bestätigt (" + storedOffset.source + ")",
+                n: cal.n, median: cal.median, confirmedZero: false };
+      }
+      for (var vi = 0; vi < vehicles.length; vi++){
+        var vv = vehicles[vi];
+        if (vv._official !== null){
+          vv.delaySec = vv._official;   // offizielle Werte werden nie verändert
+          vv.delayKind = null;
+          diag.official++;
+        } else if (vv._self !== null){
+          var corrected = vv._self - cal.sec;
+          var tooSmallGuess = vv._selfKind === "interp" && !vv._selfPrecise && Math.abs(corrected) <= 60;
+          if (Math.abs(corrected) <= MAX_PLAUSIBLE_DELAY_SEC && !tooSmallGuess){
+            vv.delaySec = corrected;
+            vv.delayKind = vv._selfKind;
+            if (vv._selfKind === "exact") diag.exact++; else diag.moving++;
+          } else {
+            diag.unknown++;
+          }
+        } else {
+          diag.unknown++;
+        }
+      }
+
+      render(vehicles);
+      renderList(vehicles);
+      lastSuccess = Date.now();
+      hideToast();
+
+      if (diagLineEl){
+        diagLineEl.textContent =
+          "Diagnose (v5): " + diag.total + " Busse · " + diag.noTripId + " ohne Trip-ID · " +
+          diag.tripNotInSchedule + " Trip-ID nicht im Fahrplan · " + diag.stopped + " an Haltestelle · " +
+          diag.official + " offiziell · " + diag.exact + " Halt-ber. · " + diag.moving + " Fahrt-ber. · " +
+          diag.unknown + " unbekannt" +
+          (diag.badTimestamp > 0 ? " · " + diag.badTimestamp + " mit unplausiblem Zeitstempel (Gerätezeit verwendet)" : "") +
+          (skewSamples.length ? " · Feed-Zeit-Abw. " + Math.round(medianOf(skewSamples)) + " s" : "") +
+          (cal.median !== null ? " · Roh-Median " + (cal.median >= 0 ? "+" : "") + Math.round(cal.median / 60) + " Min" : "") +
+          (staticDataReady ? " · Fahrplan " + (staticFromCache ? "aus Cache" : "frisch") + (staticFiltered ? " (nur Ihre Linien)" : " (komplett)") : " · Fahrplan lädt noch") +
+          (cal.sec !== 0 ? " · ZEITVERSATZ-KORREKTUR " + (cal.sec > 0 ? "−" : "+") + Math.abs(Math.round(cal.sec / 60)) + " Min (" + cal.source + ")" : "");
+      }
+
+      // Selbstheilung: passen viele Live-Fahrten nicht zum geladenen Fahrplan, ist
+      // entweder der Zwischenspeicher veraltet (-> frisch laden) oder der
+      // Linien-Filter hat zu viel weggelassen (-> einmal komplett laden).
+      if (staticDataReady && !staticLoading && diag.total >= 4 &&
+          diag.tripNotInSchedule >= Math.max(3, diag.total * 0.25)){
+        if (healStage === 0 && staticFromCache){
+          healStage = 1; idbDelete(); loadStaticData({ forceFresh: true });
+        } else if (healStage <= 1 && !staticFromCache && staticFiltered){
+          healStage = 2; loadStaticData({ forceFresh: true, noFilter: true });
+        }
+      }
+
+      if (vehicles.length === 0){
+        showToast("Gerade sind keine Busse mit Live-Daten in Meran unterwegs.");
+      }
+    }).catch(function(err){
+      showToast("Live-Daten gerade nicht erreichbar. Nächster Versuch in ein paar Sekunden …");
+      console.error(err);
+    }).finally(function(){
+      refreshBtn.classList.remove("spinning");
+      updateLastUpdateText();
+    });
+  }
+
+  refreshBtn.addEventListener("click", fetchData);
+  setInterval(fetchData, REFRESH_MS);
+  setInterval(updateLastUpdateText, 1000);
+
+  fetchData();
+})();
+</script>
+<script>
+(function(){
+  try{
+    if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
+      window.addEventListener("load", function(){
+        navigator.serviceWorker.register("sw.js").catch(function(e){ console.error("Service Worker nicht registriert", e); });
+      });
+    }
+  }catch(e){}
+})();
+</script>
+</body>
+</html>
