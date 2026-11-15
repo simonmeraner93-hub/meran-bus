@@ -478,11 +478,13 @@
   // ---------------------------------------------------------------------------
   var ALL_LINES_SET = new Set(ALL_LINES_RAW);
   var CACHE_VERSION = 3;
-  var CACHE_MAX_AGE_MS = 12 * 3600 * 1000;       // so lange gilt der Zwischenspeicher als frisch
-  var CACHE_STALE_OK_MS = 7 * 24 * 3600 * 1000;  // notfalls (Download scheitert) auch älter
+  var CACHE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;   // so lange gilt der Zwischenspeicher als frisch (veraltete Daten erkennt die Selbstheilung)
+  var CACHE_STALE_OK_MS = 30 * 24 * 3600 * 1000; // notfalls (Download scheitert) auch älter
   var IDB_NAME = "meran-bus-live", IDB_STORE = "static", IDB_KEY = "gtfs";
 
   var staticLoadAttempt = 0;
+  var MAX_AUTO_ATTEMPTS = 3;          // automatische Fahrplan-Versuche, danach nur noch auf Knopfdruck (kein Dauer-Download)
+  var liveBytes = 0, liveCalls = 0, zipBytes = 0;   // Datenverbrauch seit App-Start (Zeichen ≈ Bytes, unkomprimiert)
   var staticLoading = false;
   var staticProgressText = "";
   var staticFromCache = false;
@@ -567,10 +569,12 @@
   function fetchZipArrayBuffer(){
     return fetch(STOPS_ZIP_URL)
       .then(function(r){ if(!r.ok) throw new Error("gtfs zip " + r.status); return readResponseWithProgress(r); })
+      .then(function(buf){ zipBytes += buf.byteLength || 0; return buf; })
       .catch(function(directErr){
         console.error("Direkter GTFS-Zip-Download fehlgeschlagen, versuche CORS-Proxy …", directErr);
         return fetch(CORS_PROXY_URL + encodeURIComponent(STOPS_ZIP_URL))
           .then(function(r2){ if(!r2.ok) throw new Error("gtfs zip via Proxy " + r2.status); return readResponseWithProgress(r2); })
+          .then(function(buf2){ zipBytes += buf2.byteLength || 0; return buf2; })
           .catch(function(proxyErr){
             throw new Error("direkt: " + directErr.message + " · über Proxy: " + proxyErr.message);
           });
@@ -858,8 +862,12 @@
         } else if (!staticDataReady){
           updateStaticStatus("error", err);
         }
-        var delay = Math.min(60000, 5000 * staticLoadAttempt);
-        setTimeout(function(){ loadStaticData({ forceFresh: true, noFilter: opts.noFilter }); }, delay);
+        if (staticLoadAttempt < MAX_AUTO_ATTEMPTS){
+          var delay = Math.min(60000, 5000 * staticLoadAttempt);
+          setTimeout(function(){ loadStaticData({ forceFresh: true, noFilter: opts.noFilter }); }, delay);
+        } else if (!staticDataReady && calcHintEl){
+          calcHintEl.textContent += " · Automatische Versuche beendet. Zum erneuten Laden oben ⟳ tippen.";
+        }
       });
   }
   loadStaticData();
@@ -1282,11 +1290,18 @@
     try{ localStorage.setItem(OFFSET_KEY, JSON.stringify(storedOffset)); }catch(e){}
   }
 
+  // Liest eine JSON-Antwort und zählt deren Größe mit (nur für die Anzeige des Datenverbrauchs).
+  function readJsonCounted(r){
+    if (typeof r.text !== "function") return r.json();
+    return r.text().then(function(t){ liveBytes += t.length; liveCalls++; return JSON.parse(t); });
+  }
+  function mb(bytes){ return (bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0).replace(".", ",") + " MB"; }
+
   function fetchData(){
     refreshBtn.classList.add("spinning");
     Promise.all([
-      fetch(VEHICLE_URL).then(function(r){ if(!r.ok) throw new Error("vehicle-positions " + r.status); return r.json(); }),
-      fetch(TRIPUPD_URL).then(function(r){ if(!r.ok) throw new Error("trip-updates " + r.status); return r.json(); })
+      fetch(VEHICLE_URL).then(function(r){ if(!r.ok) throw new Error("vehicle-positions " + r.status); return readJsonCounted(r); }),
+      fetch(TRIPUPD_URL).then(function(r){ if(!r.ok) throw new Error("trip-updates " + r.status); return readJsonCounted(r); })
     ]).then(function(results){
       var vehicleJson = results[0];
       var delayIndex = buildDelayIndex(results[1]);
@@ -1433,7 +1448,7 @@
 
       if (diagLineEl){
         diagLineEl.textContent =
-          "Diagnose (v5): " + diag.total + " Busse · " + diag.noTripId + " ohne Trip-ID · " +
+          "Diagnose (v6): " + diag.total + " Busse · " + diag.noTripId + " ohne Trip-ID · " +
           diag.tripNotInSchedule + " Trip-ID nicht im Fahrplan · " + diag.stopped + " an Haltestelle · " +
           diag.official + " offiziell · " + diag.exact + " Halt-ber. · " + diag.moving + " Fahrt-ber. · " +
           diag.unknown + " unbekannt" +
@@ -1441,6 +1456,7 @@
           (skewSamples.length ? " · Feed-Zeit-Abw. " + Math.round(medianOf(skewSamples)) + " s" : "") +
           (cal.median !== null ? " · Roh-Median " + (cal.median >= 0 ? "+" : "") + Math.round(cal.median / 60) + " Min" : "") +
           (staticDataReady ? " · Fahrplan " + (staticFromCache ? "aus Cache" : "frisch") + (staticFiltered ? " (nur Ihre Linien)" : " (komplett)") : " · Fahrplan lädt noch") +
+          " · Datenverbrauch seit Start: Live " + mb(liveBytes) + " (" + liveCalls + " Abrufe)" + (zipBytes ? ", Fahrplan " + mb(zipBytes) : ", Fahrplan nicht neu geladen") +
           (cal.sec !== 0 ? " · ZEITVERSATZ-KORREKTUR " + (cal.sec > 0 ? "−" : "+") + Math.abs(Math.round(cal.sec / 60)) + " Min (" + cal.source + ")" : "");
       }
 
@@ -1468,8 +1484,25 @@
     });
   }
 
-  refreshBtn.addEventListener("click", fetchData);
-  setInterval(fetchData, REFRESH_MS);
+  var lastTick = 0;
+  function tick(){
+    // Nicht im Hintergrund / bei ausgeschaltetem Bildschirm abrufen (spart Datenvolumen und Akku).
+    if (document.hidden) return;
+    lastTick = Date.now();
+    fetchData();
+  }
+  refreshBtn.addEventListener("click", function(){
+    if (!staticDataReady && !staticLoading){ staticLoadAttempt = 0; loadStaticData({ forceFresh: true }); }
+    lastTick = Date.now();
+    fetchData();
+  });
+  setInterval(tick, REFRESH_MS);
+  if (document.addEventListener){
+    document.addEventListener("visibilitychange", function(){
+      // Beim Zurückkehren sofort aktualisieren, wenn die letzte Aktualisierung schon länger her ist.
+      if (!document.hidden && Date.now() - lastTick > 10000) tick();
+    });
+  }
   setInterval(updateLastUpdateText, 1000);
 
   fetchData();

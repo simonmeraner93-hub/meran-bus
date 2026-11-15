@@ -2,7 +2,7 @@
 // Ziel: App startet sofort (auch bei schlechtem Netz), Live-Daten kommen IMMER frisch aus dem Netz.
 // Gecacht werden nur die eigenen App-Dateien und die drei Bibliotheken (Karte, Zip-Entpacker).
 // Live-Feeds, Fahrplan-Download und Kartenkacheln werden NICHT angefasst.
-var VERSION = "v1";
+var VERSION = "v2";
 var CACHE = "meran-bus-live-" + VERSION;
 var OWN_FILES = [
   "index.html", "manifest.webmanifest",
