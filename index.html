@@ -247,7 +247,7 @@
     color:#fff;
   }
 
-  #listView{
+  #listView,#logView{
     flex:1 1 auto;
     min-height:0;
     overflow-y:auto;
@@ -301,6 +301,47 @@
   .delay-amber{background:var(--amber);}
   .delay-red{background:var(--red);}
   .delay-gray{background:var(--gray);}
+
+  /* Logbuch + Rohdaten */
+  #logView[hidden],#listView[hidden]{display:none;}
+  .log-note{font-size:11px;line-height:1.4;color:var(--muted);margin:0 0 8px 0;}
+  .log-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;}
+  .log-tools input{
+    flex:1 1 150px;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+    font-size:14px;background:var(--surface);color:var(--ink);
+  }
+  .chip-btn{
+    padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);
+    color:var(--ink);font-size:12px;font-weight:600;
+  }
+  .chip-btn.on{background:var(--green);border-color:var(--green);color:#fff;}
+  .log-line{
+    display:inline-block;margin-left:6px;padding:0 6px;border-radius:5px;background:#EFEDE4;
+    font-size:12px;font-weight:700;
+  }
+  .log-days{font-size:11px;color:var(--muted);white-space:nowrap;margin-left:8px;}
+  .log-live{color:var(--green);font-weight:700;}
+  .log-clear{margin:10px 0 4px 0;}
+  .raw-btn{
+    margin-top:6px;padding:5px 10px;border-radius:7px;border:1px solid var(--line);background:#fff;
+    color:var(--ink);font-size:12px;font-weight:600;
+  }
+  #rawSheet{
+    position:fixed;top:0;left:0;right:0;bottom:0;z-index:2000;background:var(--bg);
+    display:flex;flex-direction:column;
+  }
+  #rawSheet[hidden]{display:none;}
+  .sheet-bar{
+    display:flex;gap:8px;align-items:center;
+    padding:calc(10px + env(safe-area-inset-top)) 12px 10px 12px;
+    background:var(--surface);border-bottom:1px solid var(--line);
+  }
+  .sheet-bar b{flex:1;min-width:0;font-size:14px;}
+  #rawText{
+    flex:1 1 auto;min-height:0;margin:0;padding:12px 12px calc(12px + env(safe-area-inset-bottom)) 12px;
+    overflow:auto;font:11.5px/1.45 ui-monospace,Menlo,Consolas,monospace;
+    white-space:pre-wrap;word-break:break-word;color:var(--ink);
+  }
 </style>
 </head>
 <body>
@@ -322,10 +363,29 @@
   <div id="viewToggle">
     <button id="tabMap" class="tab-btn active" type="button">Karte</button>
     <button id="tabList" class="tab-btn" type="button">Liste</button>
+    <button id="tabLog" class="tab-btn" type="button">Logbuch</button>
   </div>
 
   <div id="map"></div>
   <div id="listView" hidden></div>
+  <div id="logView" hidden>
+    <p class="log-note" id="logNote"></p>
+    <div class="log-tools">
+      <input id="logSearch" type="search" placeholder="Nummer suchen" autocomplete="off" />
+      <button id="logMine" class="chip-btn" type="button">Nur meine Linien</button>
+      <button id="logFields" class="chip-btn" type="button">Feed-Felder</button>
+    </div>
+    <div id="logList"></div>
+    <button id="logClear" class="chip-btn log-clear" type="button">Logbuch löschen</button>
+  </div>
+  <div id="rawSheet" hidden>
+    <div class="sheet-bar">
+      <b id="rawTitle"></b>
+      <button id="rawCopy" class="chip-btn" type="button">Kopieren</button>
+      <button id="rawClose" class="chip-btn" type="button">Schließen</button>
+    </div>
+    <pre id="rawText"></pre>
+  </div>
   <div id="toast" role="status" hidden></div>
 
   <footer>
@@ -1120,24 +1180,31 @@
   var listViewEl = document.getElementById("listView");
   var tabMapBtn = document.getElementById("tabMap");
   var tabListBtn = document.getElementById("tabList");
+  var tabLogBtn = document.getElementById("tabLog");
+  var logViewEl = document.getElementById("logView");
   var calcHintEl = document.getElementById("calcHint");
   var diagLineEl = document.getElementById("diagLine");
 
+  function setActiveTab(which){
+    mapEl.hidden = which !== "map";
+    listViewEl.hidden = which !== "list";
+    logViewEl.hidden = which !== "log";
+    [["map", tabMapBtn], ["list", tabListBtn], ["log", tabLogBtn]].forEach(function(p){
+      if (p[0] === which) p[1].classList.add("active"); else p[1].classList.remove("active");
+    });
+  }
   function showMapView(){
-    mapEl.hidden = false;
-    listViewEl.hidden = true;
-    tabMapBtn.classList.add("active");
-    tabListBtn.classList.remove("active");
+    setActiveTab("map");
     setTimeout(function(){ map.invalidateSize(); }, 0);
   }
-  function showListView(){
-    mapEl.hidden = true;
-    listViewEl.hidden = false;
-    tabListBtn.classList.add("active");
-    tabMapBtn.classList.remove("active");
+  function showListView(){ setActiveTab("list"); }
+  function showLogView(){
+    setActiveTab("log");
+    if (typeof renderLogbook === "function") renderLogbook();
   }
   tabMapBtn.addEventListener("click", showMapView);
   tabListBtn.addEventListener("click", showListView);
+  tabLogBtn.addEventListener("click", showLogView);
 
   function showToast(msg){ toastEl.textContent = msg; toastEl.hidden = false; }
   function hideToast(){ toastEl.hidden = true; }
@@ -1252,7 +1319,8 @@
       '<div class="popup-row">Fahrzeug-Nr. <b>' + v.vehicleId + "</b></div>" +
       '<div class="popup-row">Verspätung: <b>' + delayInfo.text + "</b></div>" +
       '<div class="popup-row popup-muted">' + stopLine(v.status, v.stopId) + "</div>" +
-      '<div class="popup-row popup-muted">Position vom: ' + fmtTime(v.timestamp) + " (vor " + fmtAge(v.timestamp) + ")</div>"
+      '<div class="popup-row popup-muted">Position vom: ' + fmtTime(v.timestamp) + " (vor " + fmtAge(v.timestamp) + ")</div>" +
+      '<button type="button" class="raw-btn" data-mid="' + esc(v.markerId) + '">Rohdaten</button>'
     );
   }
 
@@ -1418,6 +1486,300 @@
   }
   function mb(bytes){ return (bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0).replace(".", ",") + " MB"; }
 
+  // ---------- Logbuch (zuletzt gesehen je Fahrzeug) und Rohdaten-Ansicht ----------
+  // Der Live-Feed kennt keine Vergangenheit. Das Logbuch schreibt deshalb selbst mit, was die App
+  // sieht (solange sie offen ist), und speichert es nur auf diesem Handy (localStorage).
+  var LOG_KEY = "mbl-logbook-v1";
+  var LOG_MAX = 1500;        // höchstens so viele Fahrzeuge speichern (die ältesten fliegen zuerst raus)
+  var LOG_MAX_LINES = 6;     // je Fahrzeug die letzten Linien merken
+  var LOG_SHOW_MAX = 150;    // so viele Zeilen zeigt die Liste höchstens
+  var logbook = { since: Math.floor(Date.now() / 1000), v: {} };
+  var logDirty = false, logSavedAt = 0, logOnlyMine = false;
+  var lastVehicleJson = null, lastTripJson = null, lastCalSec = 0;
+  var vehiclesByMarker = new Map();
+
+  var logNoteEl = document.getElementById("logNote");
+  var logSearchEl = document.getElementById("logSearch");
+  var logMineEl = document.getElementById("logMine");
+  var logFieldsEl = document.getElementById("logFields");
+  var logListEl = document.getElementById("logList");
+  var logClearEl = document.getElementById("logClear");
+  var rawSheetEl = document.getElementById("rawSheet");
+  var rawTitleEl = document.getElementById("rawTitle");
+  var rawTextEl = document.getElementById("rawText");
+  var rawCopyEl = document.getElementById("rawCopy");
+  var rawCloseEl = document.getElementById("rawClose");
+
+  function pad2(n){ return (n < 10 ? "0" : "") + n; }
+  function localDateParts(unixSeconds){
+    var utcMs = unixSeconds * 1000;
+    var local = new Date(utcMs + europeRomeOffsetHours(utcMs) * 3600 * 1000);
+    return { y: local.getUTCFullYear(), m: local.getUTCMonth() + 1, d: local.getUTCDate() };
+  }
+  function dateKeyOf(p){ return p.y * 10000 + p.m * 100 + p.d; }
+  function prevDateKey(p){
+    var d = new Date(Date.UTC(p.y, p.m - 1, p.d - 1));
+    return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+  }
+  function fmtDayTime(unixSeconds){
+    var p = localDateParts(unixSeconds);
+    var nowP = localDateParts(Date.now() / 1000);
+    var key = dateKeyOf(p);
+    var hm = localTimeString(unixSeconds).slice(0, 5);
+    if (key === dateKeyOf(nowP)) return "heute " + hm;
+    if (key === prevDateKey(nowP)) return "gestern " + hm;
+    return pad2(p.d) + "." + pad2(p.m) + ". " + hm;
+  }
+  function fmtAgoLong(unixSeconds){
+    var s = Math.max(0, Math.round(Date.now() / 1000 - unixSeconds));
+    if (s < 60) return s + " s";
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + " Min";
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + " Std " + (m % 60) + " Min";
+    var d = Math.floor(h / 24);
+    return d + (d === 1 ? " Tag" : " Tage");
+  }
+
+  (function loadLogbook(){
+    try{
+      var raw = localStorage.getItem(LOG_KEY);
+      if (!raw) return;
+      var s = JSON.parse(raw);
+      if (s && typeof s.since === "number" && s.v && typeof s.v === "object") logbook = s;
+    }catch(e){}
+  })();
+
+  function logSave(force){
+    if (!logDirty) return;
+    if (!force && Date.now() - logSavedAt < 60000) return;
+    logSavedAt = Date.now();
+    var ids = Object.keys(logbook.v);
+    if (ids.length > LOG_MAX){
+      ids.sort(function(a, b){ return logbook.v[a].t - logbook.v[b].t; });
+      for (var i = 0; i < ids.length - LOG_MAX; i++) delete logbook.v[ids[i]];
+    }
+    try{ localStorage.setItem(LOG_KEY, JSON.stringify(logbook)); logDirty = false; }catch(e){}
+  }
+
+  // Alle Fahrzeuge des Feeds werden mitgeschrieben (nicht nur Ihre Linien), damit ein Bus auch dann
+  // im Logbuch steht, wenn er gerade auf einer anderen Linie fährt.
+  function logUpdate(entities){
+    var nowUnix = Math.floor(Date.now() / 1000);
+    for (var i = 0; i < entities.length; i++){
+      var ve = entities[i] && entities[i].vehicle;
+      if (!ve) continue;
+      var id = (ve.vehicle && ve.vehicle.id) || entities[i].id;
+      if (id === undefined || id === null || id === "") continue;
+      id = String(id);
+      var line = String((ve.vehicle && ve.vehicle.label) || "?");
+      var t = typeof ve.timestamp === "number" ? ve.timestamp : nowUnix;
+      if (Math.abs(t - nowUnix) > 600) t = nowUnix;      // unplausible Feed-Zeit -> Gerätezeit
+      var dk = dateKeyOf(localDateParts(t));
+      var rec = logbook.v[id];
+      if (!rec) rec = logbook.v[id] = { f:t, t:t, l:line, r:[], n:1, dk:dk };
+      if (t < rec.t) continue;                           // ältere Meldung, nichts zu tun
+      rec.t = t; rec.l = line;
+      if (rec.dk !== dk){ rec.n = (rec.n || 1) + 1; rec.dk = dk; }
+      var plate = ve.vehicle && ve.vehicle.license_plate;
+      if (plate) rec.p = String(plate);
+      var r = rec.r, found = -1;
+      for (var k = 0; k < r.length; k++){ if (r[k][0] === line){ found = k; break; } }
+      if (found >= 0) r.splice(found, 1);
+      r.unshift([line, t]);
+      if (r.length > LOG_MAX_LINES) r.length = LOG_MAX_LINES;
+      logDirty = true;
+    }
+    logSave(false);
+  }
+
+  function renderLogbook(){
+    var nowUnix = Math.floor(Date.now() / 1000);
+    var ids = Object.keys(logbook.v);
+    logNoteEl.textContent =
+      "Mitgeschrieben seit " + fmtDayTime(logbook.since) + " – nur solange die App offen ist (der Live-Feed selbst " +
+      "hat keine Historie). Bisher " + ids.length + (ids.length === 1 ? " Fahrzeug" : " Fahrzeuge") + " gesehen.";
+
+    var q = String(logSearchEl.value || "").trim().toLowerCase();
+    var rows = [];
+    for (var i = 0; i < ids.length; i++){
+      var id = ids[i], rec = logbook.v[id];
+      if (logOnlyMine && !ALL_LINES_SET.has(rec.l)) continue;
+      if (q){
+        var hay = (id + " " + rec.l + " " + (rec.p || "")).toLowerCase();
+        if (hay.indexOf(q) === -1) continue;
+      }
+      rows.push({ id:id, rec:rec });
+    }
+    rows.sort(function(a, b){ return b.rec.t - a.rec.t; });
+    var total = rows.length;
+    if (rows.length > LOG_SHOW_MAX) rows.length = LOG_SHOW_MAX;
+
+    if (total === 0){
+      logListEl.innerHTML = '<div class="line-group"><div class="line-group-empty">' +
+        (ids.length === 0 ? "Noch nichts mitgeschrieben – lassen Sie die App eine Weile offen." : "Keine Treffer.") + '</div></div>';
+      return;
+    }
+    var html = '<div class="line-group">';
+    rows.forEach(function(row){
+      var rec = row.rec;
+      var live = nowUnix - rec.t < 120;
+      var before = (rec.r || []).slice(1, 4).map(function(x){ return "Linie " + esc(x[0]) + " (" + fmtDayTime(x[1]) + ")"; });
+      html += '<div class="bus-row"><div class="bus-row-left">' +
+        '<span class="bus-row-id">Fahrzeug ' + esc(row.id) + '<span class="log-line">Linie ' + esc(rec.l) + '</span></span>' +
+        '<span class="bus-row-status">' + (live ? '<span class="log-live">gerade aktiv</span>' : "zuletzt " + fmtDayTime(rec.t) + " (vor " + fmtAgoLong(rec.t) + ")") +
+          (rec.p ? " · Kennzeichen " + esc(rec.p) : "") + '</span>' +
+        (before.length ? '<span class="bus-row-status">davor: ' + before.join(" · ") + '</span>' : "") +
+        '</div><span class="log-days">' + (rec.n || 1) + ((rec.n || 1) === 1 ? " Tag" : " Tage") + '<br>seit ' + fmtDayTime(rec.f) + '</span></div>';
+    });
+    html += '</div>';
+    if (total > rows.length) html += '<p class="log-note">… und ' + (total - rows.length) + ' weitere. Mit der Suche eingrenzen.</p>';
+    logListEl.innerHTML = html;
+  }
+
+  if (logSearchEl) logSearchEl.addEventListener("input", renderLogbook);
+  logMineEl.addEventListener("click", function(){
+    logOnlyMine = !logOnlyMine;
+    if (logOnlyMine) logMineEl.classList.add("on"); else logMineEl.classList.remove("on");
+    renderLogbook();
+  });
+  logClearEl.addEventListener("click", function(){
+    if (typeof confirm === "function" && !confirm("Das Logbuch auf diesem Handy wirklich löschen?")) return;
+    logbook = { since: Math.floor(Date.now() / 1000), v: {} };
+    logDirty = true; logSave(true);
+    renderLogbook();
+  });
+
+  // ---- Rohdaten ----
+  function openSheet(title, text){
+    rawTitleEl.textContent = title;
+    rawTextEl.textContent = text;
+    rawSheetEl.hidden = false;
+    try{ rawTextEl.scrollTop = 0; }catch(e){}
+  }
+  function copyText(text, done){
+    function fallback(){
+      try{
+        var ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        done(!!ok);
+      }catch(e){ done(false); }
+    }
+    try{
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(function(){ done(true); }, fallback);
+        return;
+      }
+    }catch(e){}
+    fallback();
+  }
+  rawCloseEl.addEventListener("click", function(){ rawSheetEl.hidden = true; });
+  rawCopyEl.addEventListener("click", function(){
+    copyText(rawTextEl.textContent, function(ok){
+      rawCopyEl.textContent = ok ? "Kopiert ✓" : "Kopieren geht nicht";
+      setTimeout(function(){ rawCopyEl.textContent = "Kopieren"; }, 2000);
+    });
+  });
+
+  function nameOfStop(stopId){ return stopNameById.get(stopId) || stopId; }
+  function findTripRaw(tripId){
+    var es = (lastTripJson && lastTripJson.entity) || [];
+    for (var i = 0; i < es.length; i++){
+      var tu = es[i] && es[i].trip_update;
+      if (tu && tu.trip && tu.trip.trip_id === tripId) return es[i];
+    }
+    return null;
+  }
+  function rawTextForBus(v){
+    var out = [];
+    out.push("Bus " + v.vehicleId + " · Linie " + v.label + " · abgerufen " + localTimeString(Date.now() / 1000) + " Uhr");
+    out.push("");
+    out.push("== vehicle-positions: Eintrag dieses Busses ==");
+    out.push(JSON.stringify(v.raw, null, 2));
+    if (v.raw && v.raw.vehicle && typeof v.raw.vehicle.timestamp === "number"){
+      out.push("(timestamp = " + localTimeString(v.raw.vehicle.timestamp) + " Uhr)");
+    }
+    out.push("");
+    out.push("== trip-updates: Eintrag dieser Fahrt ==");
+    var te = v.tripId ? findTripRaw(v.tripId) : null;
+    out.push(te ? JSON.stringify(te, null, 2) : "(kein Eintrag für diese Fahrt im Feed)");
+    out.push("");
+    out.push("== Fahrplan-Abgleich ==");
+    var ts = v.tripId ? tripStops.get(v.tripId) : null;
+    if (ts && ts.length){
+      out.push("trip_id " + v.tripId + " im Fahrplan: ja, " + ts.length + " Halte, von " + nameOfStop(ts[0].stopId) +
+               " nach " + nameOfStop(ts[ts.length - 1].stopId));
+    } else {
+      out.push("trip_id " + (v.tripId || "–") + " im Fahrplan: " + (staticDataReady ? "nein" : "Fahrplan noch nicht geladen"));
+    }
+    out.push("");
+    out.push("== Verspätungs-Berechnung ==");
+    out.push("offiziell (trip-updates): " + (v._official === null || v._official === undefined ? "–" : v._official + " s"));
+    out.push("eigene Rohberechnung: " + (v._self === null || v._self === undefined ? "–" : v._self + " s (" + v._selfKind + ")"));
+    out.push("Zeitversatz-Korrektur: " + Math.round(lastCalSec / 60) + " Min");
+    out.push("angezeigt: " + (v.delaySec === null ? "unbekannt" : v.delaySec + " s"));
+    return out.join("\n");
+  }
+
+  function collectPaths(val, prefix, seen, store){
+    if (val === null || val === undefined) return;
+    if (Array.isArray(val)){
+      for (var i = 0; i < Math.min(val.length, 3); i++) collectPaths(val[i], prefix + "[]", seen, store);
+      return;
+    }
+    if (typeof val === "object"){
+      Object.keys(val).forEach(function(k){ collectPaths(val[k], prefix ? prefix + "." + k : k, seen, store); });
+      return;
+    }
+    if (!seen[prefix]){
+      seen[prefix] = true;
+      var s = store[prefix] || (store[prefix] = { n:0, ex:val });
+      s.n++;
+    }
+  }
+  function fieldsOfFeed(json, title){
+    var es = (json && json.entity) || [];
+    var store = {};
+    for (var i = 0; i < es.length; i++) collectPaths(es[i], "", {}, store);
+    var lines = ["== " + title + " – " + es.length + " Einträge im Feed ==",
+                 "Kopf: " + JSON.stringify((json && json.header) || null)];
+    Object.keys(store).sort().forEach(function(path){
+      var s = store[path], ex = JSON.stringify(s.ex);
+      if (ex.length > 50) ex = ex.slice(0, 47) + "…";
+      lines.push(path + "   " + s.n + "/" + es.length + "   z. B. " + ex);
+    });
+    return lines.join("\n");
+  }
+  function fieldOverviewText(){
+    if (!lastVehicleJson) return "Noch keine Live-Daten geladen.";
+    return "Alle Felder, die der Live-Feed gerade liefert (Pfad, in wie vielen Einträgen vorhanden, Beispielwert).\n\n" +
+      fieldsOfFeed(lastVehicleJson, "vehicle-positions") + "\n\n" + fieldsOfFeed(lastTripJson, "trip-updates");
+  }
+  logFieldsEl.addEventListener("click", function(){ openSheet("Felder im Live-Feed", fieldOverviewText()); });
+
+  // Der Rohdaten-Knopf sitzt im Info-Fenster eines Busses. Das Fenster wird alle 15 s neu befüllt,
+  // darum hängt der Klick-Handler am Fenster selbst (bleibt beim Neubefüllen erhalten).
+  if (map.on){
+    map.on("popupopen", function(e){
+      var el = e.popup && e.popup.getElement && e.popup.getElement();
+      if (!el || el._rawBound) return;
+      el._rawBound = true;
+      el.addEventListener("click", function(ev){
+        var t = ev.target;
+        while (t && t !== el){
+          if (t.classList && t.classList.contains("raw-btn")) break;
+          t = t.parentNode;
+        }
+        if (!t || t === el) return;
+        var v = vehiclesByMarker.get(t.getAttribute("data-mid"));
+        if (v) openSheet("Rohdaten Bus " + v.vehicleId + " (Linie " + v.label + ")", rawTextForBus(v));
+      });
+    });
+  }
+
   function fetchData(){
     refreshBtn.classList.add("spinning");
     Promise.all([
@@ -1425,6 +1787,7 @@
       fetch(TRIPUPD_URL).then(function(r){ if(!r.ok) throw new Error("trip-updates " + r.status); return readJsonCounted(r); })
     ]).then(function(results){
       var vehicleJson = results[0];
+      lastVehicleJson = vehicleJson; lastTripJson = results[1];
       var delayIndex = buildDelayIndex(results[1]);
       var entities = (vehicleJson && vehicleJson.entity) || [];
 
@@ -1511,6 +1874,8 @@
           // entities[i].id is the GTFS-RT feed entity id: always present, always unique.
           markerId: entities[i].id,
           vehicleId: (ve.vehicle && ve.vehicle.id) || entities[i].id,
+          tripId: tripId || null,
+          raw: entities[i],
           label: label,
           lat: lat,
           lon: lon,
@@ -1564,12 +1929,19 @@
 
       render(vehicles);
       renderList(vehicles);
+      lastCalSec = cal.sec;
+      vehiclesByMarker = new Map();
+      vehicles.forEach(function(v){ vehiclesByMarker.set(v.markerId, v); });
+      try{
+        logUpdate(entities);
+        if (!logViewEl.hidden) renderLogbook();
+      }catch(logErr){ console.error(logErr); }
       lastSuccess = Date.now();
       hideToast();
 
       if (diagLineEl){
         diagLineEl.textContent =
-          "Diagnose (v8): " + diag.total + " Busse · " + diag.noTripId + " ohne Trip-ID · " +
+          "Diagnose (v9): " + diag.total + " Busse · " + diag.noTripId + " ohne Trip-ID · " +
           diag.tripNotInSchedule + " Trip-ID nicht im Fahrplan · " + diag.stopped + " an Haltestelle · " +
           diag.official + " offiziell · " + diag.exact + " Halt-ber. · " + diag.moving + " Fahrt-ber. · " +
           diag.unknown + " unbekannt" +
@@ -1623,7 +1995,11 @@
     document.addEventListener("visibilitychange", function(){
       // Beim Zurückkehren sofort aktualisieren, wenn die letzte Aktualisierung schon länger her ist.
       if (!document.hidden && Date.now() - lastTick > 10000) tick();
+      if (document.hidden) logSave(true);   // Logbuch sichern, bevor die App in den Hintergrund geht
     });
+  }
+  if (typeof window !== "undefined" && window.addEventListener){
+    window.addEventListener("pagehide", function(){ logSave(true); });
   }
   setInterval(updateLastUpdateText, 1000);
 
