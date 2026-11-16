@@ -143,7 +143,7 @@
   .dot-amber{background:var(--amber);}
   .dot-red{background:var(--red);}
   .dot-gray{background:var(--gray);}
-  /* Statustexte werden weiter gepflegt, aber nicht angezeigt (siehe Logbuch -> Diagnose) */
+  /* Statustexte werden weiter gepflegt, aber nicht angezeigt (siehe Tipp auf die Busanzahl oben rechts) */
   #lastUpdate,#calcHint,#diagLine{display:none;}
   footer{padding-top:7px;padding-bottom:calc(7px + env(safe-area-inset-bottom));}
   .legend{margin-bottom:0;gap:4px 10px;font-size:11px;}
@@ -248,7 +248,7 @@
     color:#fff;
   }
 
-  #listView,#logView{
+  #listView{
     flex:1 1 auto;
     min-height:0;
     overflow-y:auto;
@@ -303,26 +303,13 @@
   .delay-red{background:var(--red);}
   .delay-gray{background:var(--gray);}
 
-  /* Logbuch + Rohdaten */
-  #logView[hidden],#listView[hidden]{display:none;}
-  .log-note{font-size:11px;line-height:1.4;color:var(--muted);margin:0 0 8px 0;}
-  .log-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;}
-  .log-tools input{
-    flex:1 1 150px;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
-    font-size:14px;background:var(--surface);color:var(--ink);
-  }
+  /* Rohdaten */
+  #listView[hidden]{display:none;}
+  #busCount{cursor:pointer;}
   .chip-btn{
     padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);
     color:var(--ink);font-size:12px;font-weight:600;
   }
-  .chip-btn.on{background:var(--green);border-color:var(--green);color:#fff;}
-  .log-line{
-    display:inline-block;margin-left:6px;padding:0 6px;border-radius:5px;background:#EFEDE4;
-    font-size:12px;font-weight:700;
-  }
-  .log-days{font-size:11px;color:var(--muted);white-space:nowrap;margin-left:8px;}
-  .log-live{color:var(--green);font-weight:700;}
-  .log-clear{margin:10px 0 4px 0;}
   .raw-btn{
     margin-top:6px;padding:5px 10px;border-radius:7px;border:1px solid var(--line);background:#fff;
     color:var(--ink);font-size:12px;font-weight:600;
@@ -364,22 +351,10 @@
   <div id="viewToggle">
     <button id="tabMap" class="tab-btn active" type="button">Karte</button>
     <button id="tabList" class="tab-btn" type="button">Liste</button>
-    <button id="tabLog" class="tab-btn" type="button">Logbuch</button>
   </div>
 
   <div id="map"></div>
   <div id="listView" hidden></div>
-  <div id="logView" hidden>
-    <p class="log-note" id="logNote"></p>
-    <div class="log-tools">
-      <input id="logSearch" type="search" placeholder="Nummer suchen" autocomplete="off" />
-      <button id="logMine" class="chip-btn" type="button">Nur meine Linien</button>
-      <button id="logFields" class="chip-btn" type="button">Feed-Felder</button>
-    </div>
-    <div id="logList"></div>
-    <button id="logClear" class="chip-btn log-clear" type="button">Logbuch löschen</button>
-    <button id="logDiag" class="chip-btn log-clear" type="button">Diagnose</button>
-  </div>
   <div id="rawSheet" hidden>
     <div class="sheet-bar">
       <b id="rawTitle"></b>
@@ -1182,16 +1157,13 @@
   var listViewEl = document.getElementById("listView");
   var tabMapBtn = document.getElementById("tabMap");
   var tabListBtn = document.getElementById("tabList");
-  var tabLogBtn = document.getElementById("tabLog");
-  var logViewEl = document.getElementById("logView");
   var calcHintEl = document.getElementById("calcHint");
   var diagLineEl = document.getElementById("diagLine");
 
   function setActiveTab(which){
     mapEl.hidden = which !== "map";
     listViewEl.hidden = which !== "list";
-    logViewEl.hidden = which !== "log";
-    [["map", tabMapBtn], ["list", tabListBtn], ["log", tabLogBtn]].forEach(function(p){
+    [["map", tabMapBtn], ["list", tabListBtn]].forEach(function(p){
       if (p[0] === which) p[1].classList.add("active"); else p[1].classList.remove("active");
     });
   }
@@ -1200,13 +1172,8 @@
     setTimeout(function(){ map.invalidateSize(); }, 0);
   }
   function showListView(){ setActiveTab("list"); }
-  function showLogView(){
-    setActiveTab("log");
-    if (typeof renderLogbook === "function") renderLogbook();
-  }
   tabMapBtn.addEventListener("click", showMapView);
   tabListBtn.addEventListener("click", showListView);
-  tabLogBtn.addEventListener("click", showLogView);
 
   function showToast(msg){ toastEl.textContent = msg; toastEl.hidden = false; }
   function hideToast(){ toastEl.hidden = true; }
@@ -1322,7 +1289,6 @@
       '<div class="popup-row">Verspätung: <b>' + delayInfo.text + "</b></div>" +
       '<div class="popup-row popup-muted">' + stopLine(v.status, v.stopId) + "</div>" +
       '<div class="popup-row popup-muted">Position vom: ' + fmtTime(v.timestamp) + " (vor " + fmtAge(v.timestamp) + ")</div>" +
-      logInfoForPopup(v.vehicleId) +
       '<button type="button" class="raw-btn" data-mid="' + esc(v.markerId) + '">Rohdaten</button>'
     );
   }
@@ -1489,178 +1455,18 @@
   }
   function mb(bytes){ return (bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0).replace(".", ",") + " MB"; }
 
-  // ---------- Logbuch (zuletzt gesehen je Fahrzeug) und Rohdaten-Ansicht ----------
-  // Der Live-Feed kennt keine Vergangenheit. Das Logbuch schreibt deshalb selbst mit, was die App
-  // sieht (solange sie offen ist), und speichert es nur auf diesem Handy (localStorage).
-  var LOG_KEY = "mbl-logbook-v1";
-  var LOG_MAX = 1500;        // höchstens so viele Fahrzeuge speichern (die ältesten fliegen zuerst raus)
-  var LOG_MAX_LINES = 6;     // je Fahrzeug die letzten Linien merken
-  var LOG_SHOW_MAX = 150;    // so viele Zeilen zeigt die Liste höchstens
-  var logbook = { since: Math.floor(Date.now() / 1000), v: {} };
-  var logDirty = false, logSavedAt = 0, logOnlyMine = false;
+  // ---------- Rohdaten-Ansicht ----------
+  // Knopf "Rohdaten" im Info-Fenster eines Busses und Tipp auf die Busanzahl oben (Diagnose + Feld-Übersicht).
   var lastVehicleJson = null, lastTripJson = null, lastCalSec = 0;
   var vehiclesByMarker = new Map();
-
-  var logNoteEl = document.getElementById("logNote");
-  var logSearchEl = document.getElementById("logSearch");
-  var logMineEl = document.getElementById("logMine");
-  var logFieldsEl = document.getElementById("logFields");
-  var logListEl = document.getElementById("logList");
-  var logClearEl = document.getElementById("logClear");
   var rawSheetEl = document.getElementById("rawSheet");
   var rawTitleEl = document.getElementById("rawTitle");
   var rawTextEl = document.getElementById("rawText");
   var rawCopyEl = document.getElementById("rawCopy");
   var rawCloseEl = document.getElementById("rawClose");
 
-  function pad2(n){ return (n < 10 ? "0" : "") + n; }
-  function localDateParts(unixSeconds){
-    var utcMs = unixSeconds * 1000;
-    var local = new Date(utcMs + europeRomeOffsetHours(utcMs) * 3600 * 1000);
-    return { y: local.getUTCFullYear(), m: local.getUTCMonth() + 1, d: local.getUTCDate() };
-  }
-  function dateKeyOf(p){ return p.y * 10000 + p.m * 100 + p.d; }
-  function prevDateKey(p){
-    var d = new Date(Date.UTC(p.y, p.m - 1, p.d - 1));
-    return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
-  }
-  function fmtDayTime(unixSeconds){
-    var p = localDateParts(unixSeconds);
-    var nowP = localDateParts(Date.now() / 1000);
-    var key = dateKeyOf(p);
-    var hm = localTimeString(unixSeconds).slice(0, 5);
-    if (key === dateKeyOf(nowP)) return "heute " + hm;
-    if (key === prevDateKey(nowP)) return "gestern " + hm;
-    return pad2(p.d) + "." + pad2(p.m) + ". " + hm;
-  }
-  function fmtAgoLong(unixSeconds){
-    var s = Math.max(0, Math.round(Date.now() / 1000 - unixSeconds));
-    if (s < 60) return s + " s";
-    var m = Math.floor(s / 60);
-    if (m < 60) return m + " Min";
-    var h = Math.floor(m / 60);
-    if (h < 24) return h + " Std " + (m % 60) + " Min";
-    var d = Math.floor(h / 24);
-    return d + (d === 1 ? " Tag" : " Tage");
-  }
-
-  // Zeile im Info-Fenster: wo der Bus zuvor unterwegs war (aus dem Logbuch)
-  function logInfoForPopup(vehicleId){
-    var rec = logbook.v[String(vehicleId)];
-    if (!rec) return "";
-    var before = (rec.r || []).slice(1, 4).map(function(x){ return "Linie " + esc(x[0]) + " (" + fmtDayTime(x[1]) + ")"; });
-    if (before.length) return '<div class="popup-row popup-muted">Davor: ' + before.join(" · ") + '</div>';
-    return '<div class="popup-row popup-muted">Keine frühere Fahrt im Logbuch (mitgeschrieben seit ' + fmtDayTime(logbook.since) + ')</div>';
-  }
-
-  (function loadLogbook(){
-    try{
-      var raw = localStorage.getItem(LOG_KEY);
-      if (!raw) return;
-      var s = JSON.parse(raw);
-      if (s && typeof s.since === "number" && s.v && typeof s.v === "object") logbook = s;
-    }catch(e){}
-  })();
-
-  function logSave(force){
-    if (!logDirty) return;
-    if (!force && Date.now() - logSavedAt < 60000) return;
-    logSavedAt = Date.now();
-    var ids = Object.keys(logbook.v);
-    if (ids.length > LOG_MAX){
-      ids.sort(function(a, b){ return logbook.v[a].t - logbook.v[b].t; });
-      for (var i = 0; i < ids.length - LOG_MAX; i++) delete logbook.v[ids[i]];
-    }
-    try{ localStorage.setItem(LOG_KEY, JSON.stringify(logbook)); logDirty = false; }catch(e){}
-  }
-
-  // Alle Fahrzeuge des Feeds werden mitgeschrieben (nicht nur Ihre Linien), damit ein Bus auch dann
-  // im Logbuch steht, wenn er gerade auf einer anderen Linie fährt.
-  function logUpdate(entities){
-    var nowUnix = Math.floor(Date.now() / 1000);
-    for (var i = 0; i < entities.length; i++){
-      var ve = entities[i] && entities[i].vehicle;
-      if (!ve) continue;
-      var id = (ve.vehicle && ve.vehicle.id) || entities[i].id;
-      if (id === undefined || id === null || id === "") continue;
-      id = String(id);
-      var line = String((ve.vehicle && ve.vehicle.label) || "?");
-      var t = typeof ve.timestamp === "number" ? ve.timestamp : nowUnix;
-      if (Math.abs(t - nowUnix) > 600) t = nowUnix;      // unplausible Feed-Zeit -> Gerätezeit
-      var dk = dateKeyOf(localDateParts(t));
-      var rec = logbook.v[id];
-      if (!rec) rec = logbook.v[id] = { f:t, t:t, l:line, r:[], n:1, dk:dk };
-      if (t < rec.t) continue;                           // ältere Meldung, nichts zu tun
-      rec.t = t; rec.l = line;
-      if (rec.dk !== dk){ rec.n = (rec.n || 1) + 1; rec.dk = dk; }
-      var plate = ve.vehicle && ve.vehicle.license_plate;
-      if (plate) rec.p = String(plate);
-      var r = rec.r, found = -1;
-      for (var k = 0; k < r.length; k++){ if (r[k][0] === line){ found = k; break; } }
-      if (found >= 0) r.splice(found, 1);
-      r.unshift([line, t]);
-      if (r.length > LOG_MAX_LINES) r.length = LOG_MAX_LINES;
-      logDirty = true;
-    }
-    logSave(false);
-  }
-
-  function renderLogbook(){
-    var nowUnix = Math.floor(Date.now() / 1000);
-    var ids = Object.keys(logbook.v);
-    logNoteEl.textContent =
-      "Mitgeschrieben seit " + fmtDayTime(logbook.since) + " – nur solange die App offen ist (der Live-Feed selbst " +
-      "hat keine Historie). Bisher " + ids.length + (ids.length === 1 ? " Fahrzeug" : " Fahrzeuge") + " gesehen.";
-
-    var q = String(logSearchEl.value || "").trim().toLowerCase();
-    var rows = [];
-    for (var i = 0; i < ids.length; i++){
-      var id = ids[i], rec = logbook.v[id];
-      if (logOnlyMine && !ALL_LINES_SET.has(rec.l)) continue;
-      if (q){
-        var hay = (id + " " + rec.l + " " + (rec.p || "")).toLowerCase();
-        if (hay.indexOf(q) === -1) continue;
-      }
-      rows.push({ id:id, rec:rec });
-    }
-    rows.sort(function(a, b){ return b.rec.t - a.rec.t; });
-    var total = rows.length;
-    if (rows.length > LOG_SHOW_MAX) rows.length = LOG_SHOW_MAX;
-
-    if (total === 0){
-      logListEl.innerHTML = '<div class="line-group"><div class="line-group-empty">' +
-        (ids.length === 0 ? "Noch nichts mitgeschrieben – lassen Sie die App eine Weile offen." : "Keine Treffer.") + '</div></div>';
-      return;
-    }
-    var html = '<div class="line-group">';
-    rows.forEach(function(row){
-      var rec = row.rec;
-      var live = nowUnix - rec.t < 120;
-      var before = (rec.r || []).slice(1, 4).map(function(x){ return "Linie " + esc(x[0]) + " (" + fmtDayTime(x[1]) + ")"; });
-      html += '<div class="bus-row"><div class="bus-row-left">' +
-        '<span class="bus-row-id">Fahrzeug ' + esc(row.id) + '<span class="log-line">Linie ' + esc(rec.l) + '</span></span>' +
-        '<span class="bus-row-status">' + (live ? '<span class="log-live">gerade aktiv</span>' : "zuletzt " + fmtDayTime(rec.t) + " (vor " + fmtAgoLong(rec.t) + ")") +
-          (rec.p ? " · Kennzeichen " + esc(rec.p) : "") + '</span>' +
-        (before.length ? '<span class="bus-row-status">davor: ' + before.join(" · ") + '</span>' : "") +
-        '</div><span class="log-days">' + (rec.n || 1) + ((rec.n || 1) === 1 ? " Tag" : " Tage") + '<br>seit ' + fmtDayTime(rec.f) + '</span></div>';
-    });
-    html += '</div>';
-    if (total > rows.length) html += '<p class="log-note">… und ' + (total - rows.length) + ' weitere. Mit der Suche eingrenzen.</p>';
-    logListEl.innerHTML = html;
-  }
-
-  if (logSearchEl) logSearchEl.addEventListener("input", renderLogbook);
-  logMineEl.addEventListener("click", function(){
-    logOnlyMine = !logOnlyMine;
-    if (logOnlyMine) logMineEl.classList.add("on"); else logMineEl.classList.remove("on");
-    renderLogbook();
-  });
-  logClearEl.addEventListener("click", function(){
-    if (typeof confirm === "function" && !confirm("Das Logbuch auf diesem Handy wirklich löschen?")) return;
-    logbook = { since: Math.floor(Date.now() / 1000), v: {} };
-    logDirty = true; logSave(true);
-    renderLogbook();
-  });
+  // Ein früheres Logbuch (Version 9) wird nicht mehr verwendet: gespeicherte Daten aufräumen.
+  try{ localStorage.removeItem("mbl-logbook-v1"); }catch(e){}
 
   // ---- Rohdaten ----
   function openSheet(title, text){
@@ -1770,10 +1576,9 @@
     return "Alle Felder, die der Live-Feed gerade liefert (Pfad, in wie vielen Einträgen vorhanden, Beispielwert).\n\n" +
       fieldsOfFeed(lastVehicleJson, "vehicle-positions") + "\n\n" + fieldsOfFeed(lastTripJson, "trip-updates");
   }
-  logFieldsEl.addEventListener("click", function(){ openSheet("Felder im Live-Feed", fieldOverviewText()); });
-  document.getElementById("logDiag").addEventListener("click", function(){
-    var parts = [lastUpdateEl.textContent, calcHintEl.textContent, "", String(diagLineEl.textContent || "").split(" · ").join("\n· ")];
-    openSheet("Diagnose", parts.join("\n"));
+  busCountEl.addEventListener("click", function(){
+    var parts = [lastUpdateEl.textContent, calcHintEl.textContent, "", String(diagLineEl.textContent || "").split(" · ").join("\n· "), "", fieldOverviewText()];
+    openSheet("Info und Diagnose", parts.join("\n"));
   });
 
   // Der Rohdaten-Knopf sitzt im Info-Fenster eines Busses. Das Fenster wird alle 15 s neu befüllt,
@@ -1948,16 +1753,12 @@
       lastCalSec = cal.sec;
       vehiclesByMarker = new Map();
       vehicles.forEach(function(v){ vehiclesByMarker.set(v.markerId, v); });
-      try{
-        logUpdate(entities);
-        if (!logViewEl.hidden) renderLogbook();
-      }catch(logErr){ console.error(logErr); }
       lastSuccess = Date.now();
       hideToast();
 
       if (diagLineEl){
         diagLineEl.textContent =
-          "Diagnose (v9): " + diag.total + " Busse · " + diag.noTripId + " ohne Trip-ID · " +
+          "Diagnose (v10): " + diag.total + " Busse · " + diag.noTripId + " ohne Trip-ID · " +
           diag.tripNotInSchedule + " Trip-ID nicht im Fahrplan · " + diag.stopped + " an Haltestelle · " +
           diag.official + " offiziell · " + diag.exact + " Halt-ber. · " + diag.moving + " Fahrt-ber. · " +
           diag.unknown + " unbekannt" +
@@ -2011,11 +1812,7 @@
     document.addEventListener("visibilitychange", function(){
       // Beim Zurückkehren sofort aktualisieren, wenn die letzte Aktualisierung schon länger her ist.
       if (!document.hidden && Date.now() - lastTick > 10000) tick();
-      if (document.hidden) logSave(true);   // Logbuch sichern, bevor die App in den Hintergrund geht
     });
-  }
-  if (typeof window !== "undefined" && window.addEventListener){
-    window.addEventListener("pagehide", function(){ logSave(true); });
   }
   setInterval(updateLastUpdateText, 1000);
 
